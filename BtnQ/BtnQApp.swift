@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Menu bar icon choice (SF Symbol name), persisted.
     private let iconKey = "menuBarIcon"
-    static let defaultIcon = "slider.horizontal.below.square.and.square.filled"
+    static let defaultIcon = "slider.horizontal.below.square.filled.and.square"
     static let iconChoices: [(label: String, symbol: String)] = [
         ("Sun Max", "sun.max"),
         ("Sun Max Fill", "sun.max.fill"),
@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ("Sun Min Fill", "sun.min.fill"),
         ("Display", "display"),
         ("Sliders", "slider.vertical.3"),
-        ("Sliders Square", "slider.horizontal.below.square.and.square.filled"),
+        ("Sliders Square", "slider.horizontal.below.square.filled.and.square"),
         ("Dial Low", "dial.low"),
         ("Dial High", "dial.high"),
         ("Contrast", "circle.righthalf.filled"),
@@ -96,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A flat, monochrome template image for an SF Symbol. `isTemplate` alone
     /// doesn't flatten symbols that default to variable/multicolour rendering
-    /// (e.g. `display`, `slider.horizontal.below.square.and.square.filled`), so
+    /// (e.g. `display`, `slider.horizontal.below.square.filled.and.square`), so
     /// force a monochrome rendering configuration too.
     static func monochromeSymbol(_ name: String, accessibility: String? = nil) -> NSImage? {
         guard let base = NSImage(systemSymbolName: name, accessibilityDescription: accessibility) else { return nil }
