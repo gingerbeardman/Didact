@@ -6,6 +6,8 @@ window, no 800 MB helper, just standard macOS menus.
 Built for the **BenQ RD280UG**, but every monitor-specific detail lives in a JSON
 config, so support for other monitors can be added with **no code changes**.
 
+<img width="472" height="536" alt="BtnQ" src="https://github.com/user-attachments/assets/6e3e6b7a-fd4c-4bd3-bb48-cf05da2d98e3" />
+
 ## Requirements
 
 - Apple Silicon Mac (DDC is done via `IOAVService`, Apple-Silicon only).
