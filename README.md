@@ -3,9 +3,10 @@
 A tiny macOS menu-bar app to control an external monitor over DDC/CI — no settings
 window, no ~1 GB control panel, just standard macOS menus.
 
-Set up any DDC/CI monitor with a built-in wizard that detects its standard
-controls and learns the rest; every monitor-specific detail lives in a shareable
-JSON profile, so new monitors are added with **no code changes**.
+Initially built for the **BenQ RD280UG** (which it ships with a profile for),
+Didact now works toward supporting any DDC/CI monitor: a built-in wizard detects
+the standard controls and learns the rest, and every monitor-specific detail lives
+in a shareable JSON profile — so new monitors need **no code changes**.
 
 <img width="472" height="536" alt="Didact Light Mode" src="https://github.com/user-attachments/assets/6e3e6b7a-fd4c-4bd3-bb48-cf05da2d98e3" /> <img width="472" height="536" alt="Didact Dark Mode" src="https://github.com/user-attachments/assets/6df68a1a-b997-4fb8-a16e-4915e1dd0b81" />
 
