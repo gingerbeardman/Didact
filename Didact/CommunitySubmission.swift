@@ -12,7 +12,7 @@
 import AppKit
 
 enum CommunitySubmission {
-    private static let newIssueBase = "https://github.com/gingerbeardman/BtnQ/issues/new"
+    private static let newIssueBase = "https://github.com/gingerbeardman/Didact/issues/new"
 
     /// Returns true if the issue was opened pre-filled, false if it fell back to a
     /// bare issue (body on the clipboard only).

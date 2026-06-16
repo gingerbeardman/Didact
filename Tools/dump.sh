@@ -1,10 +1,10 @@
 #!/bin/bash
-# Build and run the BtnQ DDC dump CLI from the app's own DDC sources.
+# Build and run the Didact DDC dump CLI from the app's own DDC sources.
 # The compiled binary is cached under build/ and only rebuilt when a source
 # changes. Usage: ./Tools/dump.sh [path/to/config.json]
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/BtnQ"
+SRC="$ROOT/Didact"
 BIN="$ROOT/build/btnq-dump"
 SOURCES=(
   "$SRC/AppleSiliconDDC.swift"

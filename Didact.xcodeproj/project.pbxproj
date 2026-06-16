@@ -12,14 +12,14 @@
 			containerPortal = C95783FF2FDDC88B000337A7 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = C95784062FDDC88B000337A7;
-			remoteInfo = BtnQ;
+			remoteInfo = Didact;
 		};
 		C957841F2FDDC88C000337A7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = C95783FF2FDDC88B000337A7 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = C95784062FDDC88B000337A7;
-			remoteInfo = BtnQ;
+			remoteInfo = Didact;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -30,19 +30,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		C95784092FDDC88B000337A7 /* BtnQ */ = {
+		C95784092FDDC88B000337A7 /* Didact */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BtnQ;
+			path = Didact;
 			sourceTree = "<group>";
 		};
-		C95784172FDDC88C000337A7 /* BtnQTests */ = {
+		C95784172FDDC88C000337A7 /* DidactTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BtnQTests;
+			path = DidactTests;
 			sourceTree = "<group>";
 		};
-		C95784212FDDC88C000337A7 /* BtnQUITests */ = {
+		C95784212FDDC88C000337A7 /* DidactUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BtnQUITests;
+			path = DidactUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -75,9 +75,9 @@
 		C95783FE2FDDC88B000337A7 = {
 			isa = PBXGroup;
 			children = (
-				C95784092FDDC88B000337A7 /* BtnQ */,
-				C95784172FDDC88C000337A7 /* BtnQTests */,
-				C95784212FDDC88C000337A7 /* BtnQUITests */,
+				C95784092FDDC88B000337A7 /* Didact */,
+				C95784172FDDC88C000337A7 /* DidactTests */,
+				C95784212FDDC88C000337A7 /* DidactUITests */,
 				C95784082FDDC88B000337A7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -108,12 +108,12 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				C95784092FDDC88B000337A7 /* BtnQ */,
+				C95784092FDDC88B000337A7 /* Didact */,
 			);
 			name = Didact;
 			packageProductDependencies = (
 			);
-			productName = BtnQ;
+			productName = Didact;
 			productReference = C95784072FDDC88B000337A7 /* Didact.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -131,12 +131,12 @@
 				C95784162FDDC88C000337A7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				C95784172FDDC88C000337A7 /* BtnQTests */,
+				C95784172FDDC88C000337A7 /* DidactTests */,
 			);
 			name = DidactTests;
 			packageProductDependencies = (
 			);
-			productName = BtnQTests;
+			productName = DidactTests;
 			productReference = C95784142FDDC88C000337A7 /* DidactTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
@@ -154,12 +154,12 @@
 				C95784202FDDC88C000337A7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				C95784212FDDC88C000337A7 /* BtnQUITests */,
+				C95784212FDDC88C000337A7 /* DidactUITests */,
 			);
 			name = DidactUITests;
 			packageProductDependencies = (
 			);
-			productName = BtnQUITests;
+			productName = DidactUITests;
 			productReference = C957841E2FDDC88C000337A7 /* DidactUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
@@ -477,7 +477,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.7;
 				MARKETING_VERSION = 2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.DidactTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -498,7 +498,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 15.7;
 				MARKETING_VERSION = 2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.DidactTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -517,14 +517,14 @@
 				DEVELOPMENT_TEAM = Q3Z639YB49;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.DidactUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = BtnQ;
+				TEST_TARGET_NAME = Didact;
 			};
 			name = Debug;
 		};
@@ -536,14 +536,14 @@
 				DEVELOPMENT_TEAM = Q3Z639YB49;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.BtnQUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gingerbeardman.DidactUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = BtnQ;
+				TEST_TARGET_NAME = Didact;
 			};
 			name = Release;
 		};

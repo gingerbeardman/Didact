@@ -12,7 +12,7 @@ import ServiceManagement
 import SwiftUI
 
 @main
-struct BtnQApp: App {
+struct DidactApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
