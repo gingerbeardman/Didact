@@ -159,6 +159,21 @@ final class DisplayController {
         DDCListener(service: service, queue: queue, controls: config.controls, onLog: onLog)
     }
 
+    /// Make a teach session bound to this display, sharing the DDC queue so its
+    /// probe reads stay serialized with normal control I/O.
+    func makeLearnSession() -> LearnSession {
+        LearnSession(service: service, queue: queue)
+    }
+
+    /// Read this display's raw DDC capabilities string (for a community submission).
+    func readCapabilities(completion: @escaping @MainActor (String?) -> Void) {
+        let svc = service
+        queue.async {
+            let caps = AppleSiliconDDC.readCapabilities(service: svc)
+            DispatchQueue.main.async { completion(caps) }
+        }
+    }
+
     // MARK: - Persistence (for write-only / unreadable controls)
 
     private func persistIfNeeded(_ control: Control, value: Int) {

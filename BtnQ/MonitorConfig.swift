@@ -67,43 +67,43 @@ struct Control: Codable {
     enum ByteSelector: String, Codable { case high, low }
 
     let kind: Kind
-    var label: String?
+    var label: String? = nil
 
     // DDC addressing
-    var vcp: HexValue?          // feature code, e.g. "60"
-    var channel: HexValue?      // high byte for channel-multiplexed writes (chan<<8 | value)
-    var byte: ByteSelector?     // which byte this control occupies in a packed 16-bit register
+    var vcp: HexValue? = nil    // feature code, e.g. "60"
+    var channel: HexValue? = nil // high byte for channel-multiplexed writes (chan<<8 | value)
+    var byte: ByteSelector? = nil // which byte this control occupies in a packed 16-bit register
                                 // (e.g. d9 = (temp<<8)|brightness): read and written together
 
     // range
-    var min: Int?
-    var max: Int?
-    var step: Int?
+    var min: Int? = nil
+    var max: Int? = nil
+    var step: Int? = nil
 
     // cycle
-    var options: [Option]?
+    var options: [Option]? = nil
 
     // toggle
-    var onValue: HexValue?
-    var offValue: HexValue?
+    var onValue: HexValue? = nil
+    var offValue: HexValue? = nil
 
     // quirks
-    var noRead: Bool?           // value can't be read back; keep a local copy
-    var noVerify: Bool?         // monitor lies on read-back after a write
+    var noRead: Bool? = nil     // value can't be read back; keep a local copy
+    var noVerify: Bool? = nil   // monitor lies on read-back after a write
 
     /// Render this control disabled (read-only) while another control holds a
     /// given value — e.g. Moon Halo Brightness is read-only when the Moon Halo
     /// switch is on Auto.
-    var disableWhen: Condition?
+    var disableWhen: Condition? = nil
 
     /// Hide this control entirely while another control holds a given value —
     /// e.g. Low Blue Light is unavailable in the sRGB color mode.
-    var hideWhen: Condition?
+    var hideWhen: Condition? = nil
 
     struct Option: Codable {
-        var value: HexValue?       // DDC value; nil for a system option (e.g. HDR)
+        var value: HexValue? = nil // DDC value; nil for a system option (e.g. HDR)
         let label: String
-        var hdr: Bool?             // true → toggles the macOS system HDR setting, not DDC
+        var hdr: Bool? = nil       // true → toggles the macOS system HDR setting, not DDC
     }
 
     struct Condition: Codable {
@@ -186,14 +186,17 @@ enum MonitorConfigStore {
         var configs: [MonitorConfig] = []
         let decoder = JSONDecoder()
 
+        // User-directory files first so a re-taught profile takes precedence over
+        // a bundled one for the same monitor (display matching picks the first
+        // match, see AppDelegate.rescanDisplays).
         var urls: [URL] = []
-        if let bundled = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) {
-            urls += bundled
-        }
         ensureUserDirectory()
         if let userFiles = try? FileManager.default.contentsOfDirectory(
             at: userDirectory, includingPropertiesForKeys: nil) {
             urls += userFiles.filter { $0.pathExtension.lowercased() == "json" }
+        }
+        if let bundled = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) {
+            urls += bundled
         }
 
         for url in urls {
@@ -205,8 +208,61 @@ enum MonitorConfigStore {
         return configs
     }
 
+    /// Only the bundled (trusted, curated) profiles — used as the source for the
+    /// wizard's auto-fill, so a user's own earlier (possibly wrong) profile can't
+    /// feed its mistakes back in.
+    static func loadBundled() -> [MonitorConfig] {
+        let decoder = JSONDecoder()
+        let urls = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) ?? []
+        return urls.compactMap { url in
+            guard let data = try? Data(contentsOf: url),
+                  let config = try? decoder.decode(MonitorConfig.self, from: data),
+                  !config.controls.isEmpty else { return nil }
+            return config
+        }
+    }
+
     static func ensureUserDirectory() {
         try? FileManager.default.createDirectory(
             at: userDirectory, withIntermediateDirectories: true)
+    }
+
+    /// The file URL a config with this name would be written to.
+    static func fileURL(forName name: String) -> URL {
+        userDirectory.appendingPathComponent(filename(forName: name))
+    }
+
+    /// `BenQ RD280UG` → `BenQ-RD280UG.json`. Collapses any run of non-alphanumeric
+    /// characters to a single dash so the filename is filesystem-safe.
+    static func filename(forName name: String) -> String {
+        var out = ""
+        var pendingDash = false
+        for ch in name {
+            if ch.isLetter || ch.isNumber {
+                if pendingDash, !out.isEmpty { out.append("-") }
+                pendingDash = false
+                out.append(ch)
+            } else {
+                pendingDash = true
+            }
+        }
+        return (out.isEmpty ? "Monitor" : out) + ".json"
+    }
+
+    /// Write a config to the user Monitors directory as pretty-printed JSON.
+    /// Throws `CocoaError(.fileWriteFileExists)` when a file of the same name
+    /// already exists and `overwriting` is false. Returns the written URL.
+    @discardableResult
+    static func save(_ config: MonitorConfig, overwriting: Bool) throws -> URL {
+        ensureUserDirectory()
+        let url = fileURL(forName: config.name)
+        if !overwriting, FileManager.default.fileExists(atPath: url.path) {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(config)
+        try data.write(to: url, options: .atomic)
+        return url
     }
 }

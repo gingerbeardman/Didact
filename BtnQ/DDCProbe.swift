@@ -35,4 +35,18 @@ enum DDCProbe {
         }
         return out
     }()
+
+    /// Codes to watch while TEACHING a control. Same set as `scanCodes` but with
+    /// the auto-movers (D7 Moon Halo composite, E1, E3) added back: in the wizard
+    /// the user is actively driving one control and we require a clear leader, so
+    /// their idle drift no longer matters — and D7 is exactly the code Moon Halo
+    /// lives on, which `scanCodes` deliberately omits.
+    static let learnCodes: [UInt8] = {
+        var seen = Set<UInt8>()
+        var out: [UInt8] = []
+        for code in scanCodes + [0xD7, 0xE1, 0xE3] where seen.insert(code).inserted {
+            out.append(code)
+        }
+        return out
+    }()
 }

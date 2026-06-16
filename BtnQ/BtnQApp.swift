@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var displays: [DisplayController] = []
     private var active: DisplayController?
     private var listenWindow: ListenWindowController?
+    private var teachWindow: TeachWizardWindowController?
 
     // Boxed references stored on menu items (Control is a value type).
     private final class CycleChoice { let control: Control; let value: Int; let isHDR: Bool
@@ -44,6 +45,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
+        // Onboard at startup: open the teach wizard when there's no supported
+        // monitor to control (so an unknown display can be set up), and always in
+        // debug builds so the wizard is easy to iterate on. Guarded so it never
+        // pops the "no display" alert when nothing teachable is connected.
+        #if DEBUG
+        let autoTeach = true
+        #else
+        let autoTeach = (active == nil)
+        #endif
+        if autoTeach, teachableServiceExists() { openTeach() }
     }
 
     @objc private func screensChanged() {
@@ -69,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ("Moon Fill", "moon.fill"),
         ("Moon Stars", "moon.stars"),
         ("Crescent", "moonphase.waning.crescent"),
+        ("Rectangle", "rectangle"),
+        ("Rectangle Portrait", "rectangle.portrait"),
     ]
     private var iconName: String {
         get { UserDefaults.standard.string(forKey: iconKey) ?? Self.defaultIcon }
@@ -292,30 +306,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let app = NSMenuItem(title: "BtnQ", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
 
-        let refresh = NSMenuItem(title: "Refresh from Monitor", action: #selector(refresh), keyEquivalent: "r")
-        refresh.target = self
-        refresh.isEnabled = active != nil
-        submenu.addItem(refresh)
+        func add(_ title: String, _ action: Selector, key: String = "", enabled: Bool = true) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.target = self
+            item.isEnabled = enabled
+            submenu.addItem(item)
+        }
 
-        let rescan = NSMenuItem(title: "Rescan Displays", action: #selector(rescan), keyEquivalent: "")
-        rescan.target = self
-        submenu.addItem(rescan)
-
-        let reload = NSMenuItem(title: "Reload Configs", action: #selector(reloadConfigs), keyEquivalent: "")
-        reload.target = self
-        submenu.addItem(reload)
-
-        let openFolder = NSMenuItem(title: "Open Monitors Folder", action: #selector(openMonitorsFolder), keyEquivalent: "")
-        openFolder.target = self
-        submenu.addItem(openFolder)
-
-        let listen = NSMenuItem(title: "Listen for Changes…", action: #selector(openListen), keyEquivalent: "d")
-        listen.target = self
-        listen.isEnabled = active != nil
-        submenu.addItem(listen)
+        // Talk to the current display.
+        add("Refresh from Monitor", #selector(refresh), key: "r", enabled: active != nil)
+        add("Rescan Displays", #selector(rescan))
 
         submenu.addItem(.separator())
 
+        // Add / share monitor support. Teach is always enabled (its purpose is to
+        // support a monitor that matches no config yet); the others need a display.
+        add("Teach Monitor Codes…", #selector(openTeach))
+        add("Submit to Community…", #selector(openSubmit), enabled: active != nil)
+        // Raw VCP change log — a developer diagnostic, not needed by end users now
+        // that the Teach wizard exists. Debug builds only.
+        #if DEBUG
+        add("Listen for Changes…", #selector(openListen), key: "d", enabled: active != nil)
+        #endif
+
+        submenu.addItem(.separator())
+
+        // Manage the profile files.
+        add("Reload Configs", #selector(reloadConfigs))
+        add("Open Monitors Folder", #selector(openMonitorsFolder))
+
+        submenu.addItem(.separator())
+
+        // App preferences.
         let iconItem = NSMenuItem(title: "Menu Bar Icon", action: nil, keyEquivalent: "")
         let iconMenu = NSMenu()
         for choice in Self.iconChoices.sorted(by: { $0.label < $1.label }) {
@@ -336,13 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         submenu.addItem(.separator())
 
-        let about = NSMenuItem(title: "About BtnQ…", action: #selector(showAbout), keyEquivalent: "")
-        about.target = self
-        submenu.addItem(about)
-
-        let quit = NSMenuItem(title: "Quit BtnQ", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        submenu.addItem(quit)
+        add("About BtnQ…", #selector(showAbout))
+        add("Quit BtnQ", #selector(quit), key: "q")
 
         app.submenu = submenu
         menu.addItem(app)
@@ -411,6 +428,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 onClose: { [weak self] in self?.listenWindow = nil })
         }
         listenWindow?.show()
+    }
+
+    @objc private func openTeach() {
+        // Prefer the active matched display — its LearnSession shares the serial
+        // DDC queue, so probe reads stay ordered with normal control I/O.
+        if let active {
+            presentTeach(session: active.makeLearnSession(), name: active.productName)
+            return
+        }
+        // No matched config: resolve a raw service for an online external display.
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(16, &ids, &count)
+        let matches = AppleSiliconDDC.getServiceMatches(displayIDs: Array(ids.prefix(Int(count))))
+            .filter { $0.service != nil }
+
+        guard !matches.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "No external display found"
+            alert.informativeText = "Connect a DDC/CI-capable monitor over DisplayPort or USB-C and try again."
+            alert.runModal()
+            return
+        }
+
+        let chosen: AppleSiliconDDC.Arm64Service
+        if matches.count == 1 {
+            chosen = matches[0]
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "Which display do you want to teach?"
+            for match in matches.prefix(3) { alert.addButton(withTitle: displayName(match)) }
+            alert.addButton(withTitle: "Cancel")
+            let offset = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            guard offset >= 0, offset < min(3, matches.count) else { return }
+            chosen = matches[offset]
+        }
+
+        guard let service = chosen.service else { return }
+        let queue = DispatchQueue(label: "com.gingerbeardman.BtnQ.teach.\(chosen.displayID)")
+        presentTeach(session: LearnSession(service: service, queue: queue), name: displayName(chosen))
+    }
+
+    /// Whether there's anything the teach wizard could run against — the active
+    /// matched display, or any online external display with a DDC service.
+    private func teachableServiceExists() -> Bool {
+        if active != nil { return true }
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(16, &ids, &count)
+        return AppleSiliconDDC.getServiceMatches(displayIDs: Array(ids.prefix(Int(count))))
+            .contains { $0.service != nil }
+    }
+
+    @objc private func openSubmit() {
+        guard let active else { return }
+        // Read the live capabilities dump to include with the profile, then submit.
+        active.readCapabilities { caps in
+            CommunitySubmission.submit(config: active.config, capabilities: caps)
+        }
+    }
+
+    private func displayName(_ match: AppleSiliconDDC.Arm64Service) -> String {
+        let name = match.serviceDetails.productName
+        return name.isEmpty ? "Display \(match.displayID)" : name
+    }
+
+    private func presentTeach(session: LearnSession, name: String) {
+        if teachWindow == nil {
+            teachWindow = TeachWizardWindowController(
+                monitorName: name, session: session, knownConfigs: MonitorConfigStore.loadBundled(),
+                onSaved: { [weak self] in self?.reloadConfigs() },
+                onClose: { [weak self] in self?.teachWindow = nil })
+        }
+        teachWindow?.show()
     }
 
     @objc private func selectIcon(_ sender: NSMenuItem) {
