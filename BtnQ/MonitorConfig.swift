@@ -276,7 +276,7 @@ enum MonitorConfigStore {
             throw CocoaError(.fileWriteFileExists)
         }
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(config)
         try data.write(to: url, options: .atomic)
         return url

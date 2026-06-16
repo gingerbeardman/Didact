@@ -22,7 +22,7 @@ enum CommunitySubmission {
         // URL-encoded (~10.7 KB vs ~4.5 KB) and blows past GitHub's pre-fill
         // limit. Compact keeps config + capabilities under it so the body fills.
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let json = (try? encoder.encode(config)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let caps = capabilities ?? "(monitor returned no capabilities string)"
         let body = """
