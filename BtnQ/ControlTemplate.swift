@@ -2,18 +2,24 @@
 //  ControlTemplate.swift
 //  BtnQ
 //
-//  The fixed catalogue of controls the Teach wizard walks through, in
-//  "most common first" order. Each entry already knows the control's KIND and
-//  (for cycles/toggles) its option values and labels — only the VCP CODE is
-//  unknown for a given monitor, so that's all the wizard learns. Standard VESA
-//  MCCS controls carry their spec-defined code in `standardCode`, which lets the
-//  wizard auto-detect them with no button press; proprietary controls (Moon
-//  Halo, Color Mode) leave it nil and are taught by observation.
+//  The catalogue of controls the Teach wizard walks through, in "most common
+//  first" order. Each entry knows the control's KIND; only the VCP CODE is
+//  unknown for a given monitor, so that's what the wizard learns.
+//
+//  Controls are tiered. UNIVERSAL controls use VESA MCCS standard codes with
+//  spec-defined meanings — they work on essentially any monitor and the wizard
+//  auto-detects them with no button press. PROPRIETARY controls (Moon Halo, the
+//  BenQ colour-mode register) have no standard code; they're taught by
+//  observation, and because their values are model-specific the wizard learns
+//  the values from the monitor / lets the user label them rather than asserting a
+//  fixed list (the template options are only a hint for known BenQ models).
 //
 
 import Foundation
 
 struct ControlTemplate {
+    enum Tier { case universal, proprietary }
+
     struct OptionTemplate {
         let value: Int
         let label: String
@@ -21,10 +27,10 @@ struct ControlTemplate {
 
     let label: String
     let kind: Control.Kind
+    let tier: Tier
 
-    /// The VESA MCCS standard feature code, when this control has one. The
-    /// wizard can read/probe it directly (its meaning is fixed by the spec);
-    /// proprietary controls leave this nil and must be taught by button press.
+    /// The VESA MCCS standard feature code, when this control has one. The wizard
+    /// reads/probes it directly; proprietary controls leave this nil.
     let standardCode: UInt8?
 
     // range
@@ -32,7 +38,8 @@ struct ControlTemplate {
     /// Used only when the monitor reports a max of 0 for a range.
     var fallbackMax: Int?
 
-    // cycle
+    // cycle — for universal controls these are authoritative; for proprietary
+    // ones they're only a hint (known-BenQ values), and unknowns are learned.
     var options: [OptionTemplate]?
 
     // toggle
@@ -46,23 +53,22 @@ struct ControlTemplate {
     /// What to tell the user to do during the manual teach step.
     let action: String
 
-    /// In "most common first" order: brightness, contrast, volume, input,
-    /// then the proprietary extras, with Moon Halo last.
     static let all: [ControlTemplate] = [
+        // ── Universal (standard MCCS) ─────────────────────────────────────────
         ControlTemplate(
-            label: "Brightness", kind: .range, standardCode: 0x10,
+            label: "Brightness", kind: .range, tier: .universal, standardCode: 0x10,
             suggestedMin: 0, fallbackMax: 100,
             action: "change Brightness up and down"),
         ControlTemplate(
-            label: "Contrast", kind: .range, standardCode: 0x12,
+            label: "Contrast", kind: .range, tier: .universal, standardCode: 0x12,
             suggestedMin: 0, fallbackMax: 100,
             action: "change Contrast up and down"),
         ControlTemplate(
-            label: "Volume", kind: .range, standardCode: 0x62,
+            label: "Volume", kind: .range, tier: .universal, standardCode: 0x62,
             suggestedMin: 0, fallbackMax: 100,
             action: "change the Volume up and down"),
         ControlTemplate(
-            label: "Source", kind: .cycle, standardCode: 0x60,
+            label: "Source", kind: .cycle, tier: .universal, standardCode: 0x60,
             options: [
                 .init(value: 0x0F, label: "DisplayPort"),
                 .init(value: 0x11, label: "HDMI"),
@@ -70,8 +76,27 @@ struct ControlTemplate {
             ],
             action: "switch the Input Source between two inputs"),
         ControlTemplate(
-            label: "Color Mode", kind: .cycle, standardCode: nil,
-            options: [
+            label: "Color Temperature", kind: .cycle, tier: .universal, standardCode: 0x14,
+            options: [   // MCCS standard colour-preset values
+                .init(value: 0x01, label: "sRGB"),
+                .init(value: 0x02, label: "Native"),
+                .init(value: 0x03, label: "4000K"),
+                .init(value: 0x04, label: "5000K"),
+                .init(value: 0x05, label: "6500K"),
+                .init(value: 0x06, label: "7500K"),
+                .init(value: 0x08, label: "9300K"),
+                .init(value: 0x0B, label: "User"),
+            ],
+            action: "change the Colour Temperature / preset"),
+        ControlTemplate(
+            label: "Sharpness", kind: .range, tier: .universal, standardCode: 0x87,
+            suggestedMin: 0, fallbackMax: 10,
+            action: "change Sharpness up and down"),
+
+        // ── Proprietary (no standard code; values model-specific) ─────────────
+        ControlTemplate(
+            label: "Color Mode", kind: .cycle, tier: .proprietary, standardCode: nil,
+            options: [   // hint for known BenQ models; unknown values are learned/labelled
                 .init(value: 0x30, label: "Coding - Dark Theme"),
                 .init(value: 0x31, label: "Coding - Light Theme"),
                 .init(value: 0x3A, label: "Coding - Paper Color"),
@@ -82,9 +107,9 @@ struct ControlTemplate {
                 .init(value: 0x0A, label: "sRGB"),
                 .init(value: 0x12, label: "User"),
             ],
-            action: "switch the Color Mode between two presets"),
+            action: "switch the Color/Picture Mode between two presets"),
         ControlTemplate(
-            label: "Moon Halo", kind: .cycle, standardCode: nil,
+            label: "Moon Halo", kind: .cycle, tier: .proprietary, standardCode: nil,
             options: [
                 .init(value: 0x30, label: "Auto"),
                 .init(value: 0x20, label: "On"),

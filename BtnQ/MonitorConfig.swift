@@ -45,13 +45,29 @@ struct MonitorConfig: Codable, Identifiable {
     let name: String
     /// Substrings matched (case-insensitively) against the display's product name.
     let match: [String]
+    /// Optional EDID identifiers (vendor + product number, as CoreGraphics
+    /// reports them). More robust than name matching — it survives renames and
+    /// localization, and is how the wider ecosystem (ddccontrol, Lunar) keys
+    /// monitors. The wizard records these for every profile it generates.
+    var edid: [EDIDMatch]?
     let controls: [Control]
     /// Optional human note; ignored by the app.
     var comment: String?
     var schemaVersion: Int?
 
-    func matches(productName: String) -> Bool {
-        match.contains { productName.range(of: $0, options: .caseInsensitive) != nil }
+    struct EDIDMatch: Codable, Equatable {
+        var vendor: Int
+        var product: Int
+    }
+
+    /// Matches on EDID (vendor+product) when available, otherwise on a product-name
+    /// substring. EDID is preferred because it's exact.
+    func matches(productName: String, vendor: Int?, product: Int?) -> Bool {
+        if let edid, let vendor, let product,
+           edid.contains(where: { $0.vendor == vendor && $0.product == product }) {
+            return true
+        }
+        return match.contains { productName.range(of: $0, options: .caseInsensitive) != nil }
     }
 }
 

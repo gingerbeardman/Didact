@@ -22,6 +22,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let monitorName: String
     private let session: LearnSession
     private let knownConfigs: [MonitorConfig]   // for auto-filling from known profiles
+    private let edid: [MonitorConfig.EDIDMatch]?   // this display's EDID, stamped into the saved profile
     private let onSaved: () -> Void   // reload configs so the monitor lights up
     private let onClose: () -> Void
 
@@ -36,6 +37,11 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var instructionLabel: NSTextField?
     private var statusLabel: NSTextField?
     private var spinner: NSProgressIndicator?
+    private var cadenceBar: NSProgressIndicator?         // fills once per detection sweep
+    private var cadenceTimer: Timer?
+    private var sweepDuration: TimeInterval = 2.5        // measured time per detection sweep
+    private var cadenceStart: Date?
+    private var lastSweepAt: Date?
     private var controlContainer: NSView?
     private var summaryScroll: NSScrollView?
     private var summaryTextView: NSTextView?
@@ -62,12 +68,15 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var testOptions: [ControlTemplate.OptionTemplate]?
     private var testValueLabel: NSTextField?
     private var testWriteWork: DispatchWorkItem?
+    private var labelingFields: [(value: Int, field: NSTextField)] = []   // user-named presets
 
     init(monitorName: String, session: LearnSession, knownConfigs: [MonitorConfig],
+         edid: [MonitorConfig.EDIDMatch]?,
          onSaved: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.monitorName = monitorName
         self.session = session
         self.knownConfigs = knownConfigs
+        self.edid = edid
         self.onSaved = onSaved
         self.onClose = onClose
     }
@@ -107,7 +116,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         instructionLabel?.isHidden = false
         statusLabel?.isHidden = false
 
-        progressLabel?.stringValue = "Welcome"
+        progressLabel?.stringValue = "Welcome to BtnQ"
         titleLabel?.stringValue = "Teach your monitor’s controls"
         instructionLabel?.stringValue = """
         BtnQ will build a control profile for this monitor. It detects the standard controls — brightness, contrast, volume, input — automatically. For anything else, it asks you to change that setting on the monitor’s own on-screen menu so it can learn the code.
@@ -141,7 +150,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
-        window.title = "Teach Codes — \(monitorName)"
+        window.title = "Set Up — \(monitorName)"
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -175,6 +184,16 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         spin.isDisplayedWhenStopped = false
         spin.translatesAutoresizingMaskIntoConstraints = false
         self.spinner = spin
+
+        let cadence = NSProgressIndicator()
+        cadence.style = .bar
+        cadence.isIndeterminate = false
+        cadence.minValue = 0
+        cadence.maxValue = 1
+        cadence.controlSize = .small
+        cadence.isHidden = true
+        cadence.translatesAutoresizingMaskIntoConstraints = false
+        self.cadenceBar = cadence
 
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -230,7 +249,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         rightButtons.translatesAutoresizingMaskIntoConstraints = false
         rightButtons.spacing = 8
 
-        [progress, title, instruction, status, spin, container, scroll, leftButtons, rightButtons]
+        [progress, title, instruction, status, spin, cadence, container, scroll, leftButtons, rightButtons]
             .forEach { content.addSubview($0) }
 
         NSLayoutConstraint.activate([
@@ -251,6 +270,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
             spin.centerYAnchor.constraint(equalTo: status.centerYAnchor),
             spin.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 8),
+
+            cadence.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 12),
+            cadence.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            cadence.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
 
             container.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 14),
             container.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
@@ -323,15 +346,15 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private func enterManualLearning(_ template: ControlTemplate) {
         resetStepTransients()
-        spinner?.startAnimation(nil)
         controlContainer?.isHidden = true
         retryButton?.isHidden = true
+        startCadence()   // shows the rhythm; replaces the plain spinner here
 
-        var instruction = "On your monitor's own on-screen menu, \(template.action) slowly and repeatedly. BtnQ is watching for the code that responds."
+        var instruction = "On your monitor’s own on-screen menu, \(template.action). The bar below is a timer for each reading — change the setting once, wait for the bar to fill, then change it again. A few times is enough."
         if template.kind == .cycle {
             // Changing a preset can move several settings at once, so detection may
             // not lock on — offer a manual pick of the codes that changed.
-            instruction += " If it won't lock on, use “Pick from changes…”."
+            instruction += " If it won’t lock on, use “Pick from changes…”."
             awaitingChoice = true
             primaryButton?.isHidden = false
             primaryButton?.title = "Pick from changes…"
@@ -341,24 +364,63 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             primaryButton?.isHidden = true
         }
         instructionLabel?.stringValue = instruction
-        setStatus("Detecting…")
+        setStatus("Waiting for a change…")
 
         session.beginLearning(expectedKind: template.kind, expectedCode: expectedCode(for: template)) { [weak self] update in
             guard let self, self.isCurrent(template) else { return }
             switch update {
-            case let .detecting(leader, count):
-                if let leader {
-                    self.setStatus("Detecting… (best guess \(Self.hex(leader)), seen \(count)×)")
-                } else {
-                    self.setStatus("Detecting… nothing has moved yet.")
-                }
+            case let .detecting(_, count):
+                self.sweepCompleted()   // one sweep done → reset the cadence fill
+                self.setStatus(count == 0
+                    ? "Waiting for a change… switch it on the monitor."
+                    : "Got it \(count)× — keep switching slowly.")
             case let .learned(code, max, current, values, capsDiscrete):
                 self.session.endLearning()
+                self.stopCadence()
                 let item = LearnedControl(template: template, code: code, max: max,
                                           options: self.cycleOptions(template, values: values, capsDiscrete: capsDiscrete))
                 self.enterConfirm(item, current: current, auto: false)
             }
         }
+    }
+
+    // MARK: - Cadence indicator
+
+    /// A bar that fills over each detection sweep. When it fills, BtnQ has read
+    /// the monitor once — so the user learns to change the setting about once per
+    /// fill (changing faster than a sweep can be missed).
+    private func startCadence() {
+        spinner?.stopAnimation(nil)
+        cadenceBar?.isHidden = false
+        cadenceBar?.doubleValue = 0
+        sweepDuration = 2.5
+        cadenceStart = Date()
+        lastSweepAt = nil
+        cadenceTimer?.invalidate()
+        // Target/selector form keeps the tick on the main actor (no Sendable warning).
+        cadenceTimer = Timer.scheduledTimer(timeInterval: 0.05, target: self,
+                                            selector: #selector(cadenceTick), userInfo: nil, repeats: true)
+    }
+
+    @objc private func cadenceTick() {
+        guard let start = cadenceStart else { return }
+        cadenceBar?.doubleValue = min(1, Date().timeIntervalSince(start) / max(0.3, sweepDuration))
+    }
+
+    /// Called each time a sweep completes — measure its real duration and restart
+    /// the fill toward the next one, so the bar tracks the actual cadence.
+    private func sweepCompleted() {
+        let now = Date()
+        if let last = lastSweepAt { sweepDuration = min(8, max(0.6, now.timeIntervalSince(last))) }
+        lastSweepAt = now
+        cadenceStart = now
+    }
+
+    private func stopCadence() {
+        cadenceTimer?.invalidate()
+        cadenceTimer = nil
+        cadenceBar?.isHidden = true
+        cadenceBar?.doubleValue = 0
     }
 
     /// Detected — stop the spinner, remember it (so Back preserves it), and
@@ -367,6 +429,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         session.endLearning()
         awaitingChoice = false
         spinner?.stopAnimation(nil)
+        stopCadence()
         pending = item
         learned[index] = item
         detectedCurrent[index] = current
@@ -375,7 +438,9 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         var status = "✓ \(how) \(Self.hex(item.code))"
         if item.template.kind == .cycle, let count = item.options?.count { status += " · \(count) options" }
         setStatus(status, color: .systemGreen)
-        instructionLabel?.stringValue = "Use the control below to check it actually changes your monitor, then Confirm. If nothing happens, Detect Again."
+        instructionLabel?.stringValue = needsLabeling(item)
+            ? "We found \(item.options?.count ?? 0) modes but don't know their names. Tap “Set” to see each one on the monitor, type its name, then Confirm."
+            : "Use the control below to check it actually changes your monitor, then Confirm. If nothing happens, Detect Again."
 
         showTestControl(for: item, current: current)
 
@@ -445,6 +510,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         testCode = item.code
         testOptions = nil
         testValueLabel = nil
+        labelingFields = []
 
         let control: NSView
         switch template.kind {
@@ -453,7 +519,13 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                                         max: item.max > 0 ? Int(item.max) : (template.fallbackMax ?? 100),
                                         current: current)
         case .cycle:
-            control = makePopupControl(options: item.options ?? template.options ?? [], current: current)
+            let options = item.options ?? template.options ?? []
+            // For a proprietary cycle whose modes we couldn't name (e.g. Picture
+            // Mode on a non-RD BenQ), let the user name each one instead of showing
+            // "Mode 0x##". Universal/known cycles just use a popup to test.
+            control = needsLabeling(item)
+                ? makeLabelingControl(options: options)
+                : makePopupControl(options: options, current: current)
         case .toggle:
             control = makeToggleControl(template: template, current: current)
         case .group, .section:
@@ -503,6 +575,66 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         let toggle = NSButton(checkboxWithTitle: template.label, target: self, action: #selector(toggleChanged(_:)))
         toggle.state = (current == template.onValue) ? .on : .off
         return toggle
+    }
+
+    /// A proprietary cycle whose modes we couldn't name from a profile/template —
+    /// the user should label them rather than ship "Mode 0x##".
+    private func needsLabeling(_ item: LearnedControl) -> Bool {
+        item.template.kind == .cycle && item.template.tier == .proprietary
+            && (item.options ?? []).contains { $0.label.hasPrefix("Mode 0x") }
+    }
+
+    /// One row per discovered value: a "Set" button to apply it (so the user sees
+    /// which preset it is on the monitor) and a field to name it. Scrollable, since
+    /// there can be many modes.
+    private func makeLabelingControl(options: [ControlTemplate.OptionTemplate]) -> NSView {
+        let rows = NSStackView()
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 6
+        rows.translatesAutoresizingMaskIntoConstraints = false
+
+        for opt in options {
+            let set = NSButton(title: "Set", target: self, action: #selector(setModeTapped(_:)))
+            set.bezelStyle = .rounded
+            set.tag = opt.value
+            let hex = NSTextField(labelWithString: String(format: "0x%02X", opt.value))
+            hex.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            hex.textColor = .secondaryLabelColor
+            let field = NSTextField(string: opt.label.hasPrefix("Mode 0x") ? "" : opt.label)
+            field.placeholderString = "Name this mode"
+            field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            labelingFields.append((opt.value, field))
+            let row = NSStackView(views: [set, hex, field])
+            row.orientation = .horizontal
+            row.spacing = 8
+            rows.addArrangedSubview(row)
+        }
+
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.documentView = rows
+        NSLayoutConstraint.activate([
+            rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+        ])
+        return scroll
+    }
+
+    @objc private func setModeTapped(_ sender: NSButton) {
+        guard let code = testCode else { return }
+        session.write(code: code, value: UInt16(sender.tag))
+    }
+
+    /// Options from the labeling fields (empty names fall back to a hex label).
+    private func labeledOptions() -> [ControlTemplate.OptionTemplate] {
+        labelingFields.map { value, field in
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .init(value: value, label: name.isEmpty ? String(format: "Mode 0x%02X", value) : name)
+        }
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -602,12 +734,12 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func finalConfig() -> MonitorConfig {
         if useRecognized, let profile = recognizedProfile {
             return MonitorConfig(
-                name: monitorName, match: [monitorName], controls: profile.controls,
+                name: monitorName, match: [monitorName], edid: edid, controls: profile.controls,
                 comment: "Matched to BtnQ's verified “\(profile.name)” profile.",
                 schemaVersion: profile.schemaVersion ?? 1)
         }
         return MonitorConfigBuilder.build(name: monitorName, learned: orderedLearned(),
-                                          extras: autoFilled, orderedLike: recognizedProfile)
+                                          extras: autoFilled, orderedLike: recognizedProfile, edid: edid)
     }
 
     private func orderedLearned() -> [LearnedControl] {
@@ -728,7 +860,13 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         } else if awaitingChoice {              // cycle detecting → pick from changes
             chooseManually()
         } else if index < templates.count {     // confirm the detected control
-            if let pending { learned[index] = pending }
+            if var item = pending {
+                if !labelingFields.isEmpty {    // commit the user's mode names
+                    item = LearnedControl(template: item.template, code: item.code,
+                                          max: item.max, options: labeledOptions())
+                }
+                learned[index] = item
+            }
             advance()
         } else if saved {                        // summary, after save
             shareToGitHub()
@@ -745,12 +883,14 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private func resetStepTransients() {
         session.endLearning()
+        stopCadence()
         awaitingChoice = false
         testWriteWork?.cancel()
         testWriteWork = nil
         testCode = nil
         testOptions = nil
         testValueLabel = nil
+        labelingFields = []
         pending = nil
         controlContainer?.subviews.forEach { $0.removeFromSuperview() }
     }
@@ -765,6 +905,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        stopCadence()
         session.stop()
         onClose()
     }

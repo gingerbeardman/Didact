@@ -28,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var active: DisplayController?
     private var listenWindow: ListenWindowController?
     private var teachWindow: TeachWizardWindowController?
+    /// Visibility snapshot (hidden control stateKeys) frozen while the menu is open,
+    /// so a post-open value refresh can't change the row set and jump the height.
+    private var frozenHidden: Set<String>?
 
     // Boxed references stored on menu items (Control is a value type).
     private final class CycleChoice { let control: Control; let value: Int; let isHDR: Bool
@@ -121,6 +124,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Display discovery
 
+    /// The display's EDID vendor and product numbers (as CoreGraphics reports
+    /// them, matching Lunar's DisplayVendorID/DisplayProductID), or nil when the
+    /// value is unknown/reserved.
+    static func edidIDs(for displayID: CGDirectDisplayID) -> (vendor: Int?, product: Int?) {
+        func valid(_ v: UInt32) -> Int? { (v == 0 || v == 0xFFFF_FFFF) ? nil : Int(v) }
+        return (valid(CGDisplayVendorNumber(displayID)), valid(CGDisplayModelNumber(displayID)))
+    }
+
     private func rescanDisplays() {
         var ids = [CGDirectDisplayID](repeating: 0, count: 16)
         var count: UInt32 = 0
@@ -133,7 +144,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let service = match.service else { continue }
             let details = match.serviceDetails
             let productName = details.productName
-            guard let config = configs.first(where: { $0.matches(productName: productName) }) else { continue }
+            let (vendor, product) = Self.edidIDs(for: match.displayID)
+            guard let config = configs.first(where: {
+                $0.matches(productName: productName, vendor: vendor, product: product)
+            }) else { continue }
             let stableID = [details.edidUUID, details.alphanumericSerialNumber, productName]
                 .first(where: { !$0.isEmpty }) ?? "\(match.displayID)"
             controllers.append(DisplayController(
@@ -161,9 +175,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        // Pull fresh values from the display each time the menu opens; the cache
-        // shows instantly, then the menu updates when the read completes.
+        // Freeze which controls are visible for this open so a post-open value
+        // refresh can't change a `hideWhen` result and snap the menu height.
+        // BUT only when we already have real values — on a cold cache (e.g. the
+        // very first open before the launch read finishes) the visibility we'd
+        // freeze is wrong, so leave it live and let the refresh correct it.
+        if let active, active.hasInitialValues {
+            frozenHidden = Set(active.config.controls.filter { active.isHidden($0) }.map(\.stateKey))
+        } else {
+            frozenHidden = nil
+        }
+        // Pull fresh values from the display; the cache shows instantly, then the
+        // menu updates when the read completes (values, and — only on a cold first
+        // open — visibility too).
         active?.refreshAll { [weak self] in self?.rebuildMenu() }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        frozenHidden = nil   // re-evaluate visibility fresh on the next open
     }
 
     private func rebuildMenu() {
@@ -202,7 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // leading or doubled dividers. No text headings: plain macOS menu.
         var addedSinceSeparator = false
         for control in active.config.controls {
-            if !control.isHeader && active.isHidden(control) { continue }
+            // Use the frozen snapshot while the menu is open so a post-open refresh
+            // can't change which rows are present (and jump the height).
+            let hidden = frozenHidden?.contains(control.stateKey) ?? active.isHidden(control)
+            if !control.isHeader && hidden { continue }
             switch control.kind {
             case .group, .section:
                 if addedSinceSeparator {
@@ -321,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Add / share monitor support. Teach is always enabled (its purpose is to
         // support a monitor that matches no config yet); the others need a display.
-        add("Teach Monitor Codes…", #selector(openTeach))
+        add("Set Up This Monitor…", #selector(openTeach))
         add("Submit to Community…", #selector(openSubmit), enabled: active != nil)
         // Raw VCP change log — a developer diagnostic, not needed by end users now
         // that the Teach wizard exists. Debug builds only.
@@ -434,7 +466,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Prefer the active matched display — its LearnSession shares the serial
         // DDC queue, so probe reads stay ordered with normal control I/O.
         if let active {
-            presentTeach(session: active.makeLearnSession(), name: active.productName)
+            presentTeach(session: active.makeLearnSession(), name: active.productName,
+                         displayID: active.displayID)
             return
         }
         // No matched config: resolve a raw service for an online external display.
@@ -467,7 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         guard let service = chosen.service else { return }
         let queue = DispatchQueue(label: "com.gingerbeardman.BtnQ.teach.\(chosen.displayID)")
-        presentTeach(session: LearnSession(service: service, queue: queue), name: displayName(chosen))
+        presentTeach(session: LearnSession(service: service, queue: queue), name: displayName(chosen),
+                     displayID: chosen.displayID)
     }
 
     /// Whether there's anything the teach wizard could run against — the active
@@ -494,10 +528,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return name.isEmpty ? "Display \(match.displayID)" : name
     }
 
-    private func presentTeach(session: LearnSession, name: String) {
+    private func presentTeach(session: LearnSession, name: String, displayID: CGDirectDisplayID) {
+        let (vendor, product) = Self.edidIDs(for: displayID)
+        let edid = (vendor != nil && product != nil) ? [MonitorConfig.EDIDMatch(vendor: vendor!, product: product!)] : nil
         if teachWindow == nil {
             teachWindow = TeachWizardWindowController(
-                monitorName: name, session: session, knownConfigs: MonitorConfigStore.loadBundled(),
+                monitorName: name, session: session, knownConfigs: MonitorConfigStore.loadBundled(), edid: edid,
                 onSaved: { [weak self] in self?.reloadConfigs() },
                 onClose: { [weak self] in self?.teachWindow = nil })
         }
