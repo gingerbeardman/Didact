@@ -18,8 +18,11 @@ enum CommunitySubmission {
     /// bare issue (body on the clipboard only).
     @discardableResult
     static func submit(config: MonitorConfig, capabilities: String?) -> Bool {
+        // Minified (not pretty-printed): pretty JSON triples in size once
+        // URL-encoded (~10.7 KB vs ~4.5 KB) and blows past GitHub's pre-fill
+        // limit. Compact keeps config + capabilities under it so the body fills.
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         let json = (try? encoder.encode(config)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let caps = capabilities ?? "(monitor returned no capabilities string)"
         let body = """
@@ -47,7 +50,7 @@ enum CommunitySubmission {
         prefilled.queryItems = [URLQueryItem(name: "title", value: title),
                                 URLQueryItem(name: "body", value: body)]
 
-        if let url = prefilled.url, url.absoluteString.count < 7500 {
+        if let url = prefilled.url, url.absoluteString.count < 8000 {
             NSWorkspace.shared.open(url)
             return true
         }
