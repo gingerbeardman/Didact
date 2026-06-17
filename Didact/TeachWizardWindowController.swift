@@ -17,6 +17,10 @@
 
 import AppKit
 
+private final class FlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 @MainActor
 final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let monitorName: String
@@ -29,7 +33,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private var templates: [ControlTemplate] {
         ControlTemplate.all.filter {
-            isRDSeries || $0.label.caseInsensitiveCompare("Moon Halo") != .orderedSame
+            $0.label.caseInsensitiveCompare("Moon Halo") != .orderedSame
         }
     }
     private var autoFilled: [Control] = []      // confirmed from a known profile
@@ -43,6 +47,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var titleLabel: NSTextField?
     private var instructionLabel: NSTextField?
     private var statusLabel: NSTextField?
+    private let minimumDetectingDuration: TimeInterval = 2
     private var spinner: NSProgressIndicator?
     private var cadenceBar: NSProgressIndicator?         // fills once per detection sweep
     private var cadenceTimer: Timer?
@@ -193,7 +198,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 430),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 370),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
         window.title = "Set Up — \(monitorName)"
@@ -327,8 +332,8 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             // different intrinsic width on each step — so the window visibly jumps
             // width between Welcome, the steps, and the summary. A fixed size makes
             // every screen identical and forces the long copy to wrap.
-            content.widthAnchor.constraint(equalToConstant: 600),
-            content.heightAnchor.constraint(equalToConstant: 430),
+            content.widthAnchor.constraint(equalToConstant: 580),
+            content.heightAnchor.constraint(equalToConstant: 370),
 
             progress.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             progress.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
@@ -393,6 +398,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     /// fingerprint — with no confirmation. Only the uncertain controls (Moon Halo,
     /// anything not cleanly advertised) remain as steps.
     private func autoAcceptThenStep() {
+        let detectingStartedAt = Date()
         setStatus("Detecting standard controls…")
         instructionLabel?.stringValue = "Reading the controls your monitor reports automatically…"
         spinner?.startAnimation(nil)
@@ -404,14 +410,17 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         doneButton?.isHidden = true
         copyButton?.isHidden = true
         backButton?.isEnabled = false
-        autoAcceptNext(0)
+        autoAcceptNext(0, startedAt: detectingStartedAt)
     }
 
-    private func autoAcceptNext(_ i: Int) {
+    private func autoAcceptNext(_ i: Int, startedAt: Date) {
         guard i < templates.count else {
-            spinner?.stopAnimation(nil)
-            index = 0
-            showStep()
+            afterMinimumDetectingDuration(since: startedAt) { [weak self] in
+                guard let self else { return }
+                self.spinner?.stopAnimation(nil)
+                self.index = 0
+                self.showStep()
+            }
             return
         }
         let t = templates[i]
@@ -423,7 +432,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 self.detectedCurrent[i] = d.current
                 self.autoAccepted.insert(i)
             }
-            self.autoAcceptNext(i + 1)
+            self.autoAcceptNext(i + 1, startedAt: startedAt)
         }
         if t.standardCode != nil {
             // A spec control that's advertised in caps is known for certain.
@@ -469,18 +478,22 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         retryButton?.isHidden = true
         primaryButton?.isHidden = true
         skipButton?.isHidden = false
+        let detectingStartedAt = Date()
 
         if template.standardCode != nil {
             setStatus("Detecting…")
             instructionLabel?.stringValue = "Checking whether your monitor reports this control automatically…"
             session.autoDetect(template) { [weak self] detected in
                 guard let self, self.isCurrent(template) else { return }
-                if let detected {
-                    let item = LearnedControl(template: template, code: detected.code, max: detected.max,
-                                              options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
-                    self.enterConfirm(item, current: detected.current, auto: true)
-                } else {
-                    self.enterManualLearning(template)
+                self.afterMinimumDetectingDuration(since: detectingStartedAt) { [weak self] in
+                    guard let self, self.isCurrent(template) else { return }
+                    if let detected {
+                        let item = LearnedControl(template: template, code: detected.code, max: detected.max,
+                                                  options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
+                        self.enterConfirm(item, current: detected.current, auto: true)
+                    } else {
+                        self.enterManualLearning(template)
+                    }
                 }
             }
         } else {
@@ -492,15 +505,27 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             instructionLabel?.stringValue = "Checking your monitor’s capabilities…"
             session.capsMatch(template, excluding: excludedCodes(for: template)) { [weak self] detected in
                 guard let self, self.isCurrent(template) else { return }
-                if let detected {
-                    let item = LearnedControl(template: template, code: detected.code, max: detected.max,
-                                              options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
-                    self.enterConfirm(item, current: detected.current, auto: true)
-                } else {
-                    self.enterManualLearning(template)
+                self.afterMinimumDetectingDuration(since: detectingStartedAt) { [weak self] in
+                    guard let self, self.isCurrent(template) else { return }
+                    if let detected {
+                        let item = LearnedControl(template: template, code: detected.code, max: detected.max,
+                                                  options: self.cycleOptions(template, code: detected.code, values: detected.values, capsDiscrete: detected.capsDiscrete))
+                        self.enterConfirm(item, current: detected.current, auto: true)
+                    } else {
+                        self.enterManualLearning(template)
+                    }
                 }
             }
         }
+    }
+
+    private func afterMinimumDetectingDuration(since start: Date, perform action: @escaping () -> Void) {
+        let remaining = minimumDetectingDuration - Date().timeIntervalSince(start)
+        guard remaining > 0 else {
+            action()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining, execute: action)
     }
 
     private func enterManualLearning(_ template: ControlTemplate) {
@@ -968,7 +993,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         // A grid so the code and type line up in columns instead of trailing each
         // (variable-width) name raggedly.
         let grid = NSGridView()
-        grid.translatesAutoresizingMaskIntoConstraints = false
         grid.rowSpacing = 9
         grid.columnSpacing = 16
         discoveryRows = []
@@ -1001,14 +1025,18 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             grid.row(at: grid.numberOfRows - 1).bottomPadding = 12
         }
 
-        discoveryScroll?.documentView = grid
-        if let clip = discoveryScroll?.contentView {
-            NSLayoutConstraint.activate([
-                grid.topAnchor.constraint(equalTo: clip.topAnchor),
-                grid.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
-                grid.trailingAnchor.constraint(lessThanOrEqualTo: clip.trailingAnchor),
-            ])
-        }
+        grid.layoutSubtreeIfNeeded()
+        let gridSize = grid.fittingSize
+        let contentWidth = discoveryScroll?.contentSize.width ?? gridSize.width
+        let document = FlippedDocumentView(frame: NSRect(
+            x: 0, y: 0,
+            width: max(contentWidth, gridSize.width),
+            height: gridSize.height
+        ))
+        document.autoresizingMask = [.width]
+        grid.frame = NSRect(origin: .zero, size: gridSize)
+        document.addSubview(grid)
+        discoveryScroll?.documentView = document
     }
 
     /// Turn each ticked row into a control, named by its MCCS standard name. Ranges
@@ -1195,7 +1223,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func rdSeriesExtras() -> [Control] {
         var extras: [Control] = []
 
-        if isRDSeries, capsCodes.contains(0xD7) {
+        if isRDSeries {
             if !orderedLearned().contains(where: { $0.template.label.caseInsensitiveCompare("Moon Halo") == .orderedSame }) {
                 extras.append(Control(kind: .cycle, label: "Moon Halo", vcp: HexValue(0xD7), valueMask: HexValue(0x00FF),
                                       options: [.init(value: HexValue(0x30), label: "Auto"),

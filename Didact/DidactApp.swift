@@ -23,12 +23,17 @@ struct DidactApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private let statusMenu = NSMenu()
     private var configs: [MonitorConfig] = []
     private var displays: [DisplayController] = []
     private var active: DisplayController?
     private var listenWindow: ListenWindowController?
     private var teachWindow: TeachWizardWindowController?
     private var menuEditorWindow: MenuEditorWindowController?
+    private var isOpeningMenu = false
+    private var isMenuOpen = false
+    private var refreshInFlight = false
+    private var refreshTimer: Timer?
     /// Visibility snapshot (hidden control stateKeys) frozen while the menu is open,
     /// so a post-open value refresh can't change the row set and jump the height.
     private var frozenHidden: Set<String>?
@@ -45,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configs = MonitorConfigStore.load()
         setupStatusItem()
         rescanDisplays()
+        startBackgroundRefresh()
 
         // Re-scan automatically when displays are plugged in / out or rearranged.
         NotificationCenter.default.addObserver(
@@ -112,9 +118,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        statusMenu.delegate = self
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(openStatusMenu)
+    }
+
+    private func startBackgroundRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(timeInterval: 10, target: self,
+                                            selector: #selector(backgroundRefreshTick),
+                                            userInfo: nil, repeats: true)
+        refreshTimer?.tolerance = 3
+    }
+
+    @objc private func backgroundRefreshTick() {
+        refreshActive(rebuildWhenDone: false)
     }
 
     private func updateStatusIcon() {
@@ -184,39 +202,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             active = displays.first
         }
-        active?.refreshAll { [weak self] in self?.rebuildMenu() }
+        refreshInFlight = false
+        refreshActive(rebuildWhenDone: true)
         rebuildMenu()
+    }
+
+    private func refreshActive(rebuildWhenDone: Bool, rebuildOpenMenuWhenDone: Bool = false) {
+        guard let active, !refreshInFlight, !isMenuOpen else { return }
+        let wasCold = !active.hasInitialValues
+        refreshInFlight = true
+        active.refreshAll { [weak self] in
+            guard let self else { return }
+            self.refreshInFlight = false
+            if rebuildWhenDone, (!self.isMenuOpen || rebuildOpenMenuWhenDone || wasCold) {
+                if self.isMenuOpen, wasCold {
+                    self.frozenHidden = Set(active.config.controls.filter { active.isHidden($0) }.map(\.stateKey))
+                }
+                self.rebuildMenu()
+            }
+        }
     }
 
     // MARK: - Menu building
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuildMenu()
-    }
+    @objc private func openStatusMenu() {
+        guard !isOpeningMenu else { return }
+        isOpeningMenu = true
 
-    func menuWillOpen(_ menu: NSMenu) {
-        // Freeze which controls are visible for this open so a post-open value
-        // refresh can't change a `hideWhen` result and snap the menu height.
-        // BUT only when we already have real values — on a cold cache (e.g. the
-        // very first open before the launch read finishes) the visibility we'd
-        // freeze is wrong, so leave it live and let the refresh correct it.
         if let active, active.hasInitialValues {
             frozenHidden = Set(active.config.controls.filter { active.isHidden($0) }.map(\.stateKey))
         } else {
             frozenHidden = nil
+            refreshActive(rebuildWhenDone: true, rebuildOpenMenuWhenDone: true)
         }
-        // Pull fresh values from the display; the cache shows instantly, then the
-        // menu updates when the read completes (values, and — only on a cold first
-        // open — visibility too).
-        active?.refreshAll { [weak self] in self?.rebuildMenu() }
+        rebuildMenu()
+        isOpeningMenu = false
+        statusItem.popUpMenu(statusMenu)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === statusMenu, !isOpeningMenu {
+            rebuildMenu()
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = menu === statusMenu
+        // Freeze which controls are visible for this open. Reads happen outside
+        // the open-menu path so the row set doesn't mutate under the pointer.
+        if menu === statusMenu, let active, active.hasInitialValues {
+            frozenHidden = Set(active.config.controls.filter { active.isHidden($0) }.map(\.stateKey))
+        } else {
+            frozenHidden = nil
+        }
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
         frozenHidden = nil   // re-evaluate visibility fresh on the next open
+        refreshActive(rebuildWhenDone: false)
     }
 
     private func rebuildMenu() {
-        guard let menu = statusItem?.menu else { return }
+        let menu = statusMenu
         menu.removeAllItems()
 
         guard let active else {
@@ -233,6 +281,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nameItem.isEnabled = false
         menu.addItem(nameItem)
 
+        guard active.hasInitialValues else {
+            let item = NSMenuItem(title: refreshInFlight ? "Reading monitor…" : "Monitor values not loaded", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            menu.addItem(.separator())
+            addAppMenu(to: menu)
+            return
+        }
+
         // When more than one supported display is connected, offer a switcher.
         if displays.count > 1 {
             addDisplayPicker(to: menu, active: active)
@@ -243,7 +300,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // gutter and shifts every native title right. Custom slider views don't
         // shift automatically, so match the inset (only toggles that are on draw
         // a checkmark in the main menu — cycle checkmarks live in submenus).
-        let checked = active.config.controls.contains { $0.kind == .toggle && active.isOn($0) }
+        let checked = active.config.controls.contains { control in
+            guard control.kind == .toggle, control.hidden != true, active.isOn(control) else { return false }
+            let hidden = frozenHidden?.contains(control.stateKey) ?? active.isHidden(control)
+            return !hidden
+        }
         let sliderInset: CGFloat = checked ? 24.5 : 14
 
         // Flat list of controls. Both `group` and `section` boundaries become a
@@ -398,27 +459,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Talk to the current display.
-        add("Refresh from Monitor", #selector(refresh), key: "r", enabled: active != nil)
+        add("Refresh from Monitor", #selector(refresh), enabled: active != nil)
         add("Rescan Displays", #selector(rescan))
 
         submenu.addItem(.separator())
 
         // Add / share monitor support. Teach is always enabled (its purpose is to
         // support a monitor that matches no config yet); the others need a display.
-        add("Set Up This Monitor…", #selector(openTeach), key: "s")
+        add("Set Up This Monitor…", #selector(openTeach))
         add("Edit Menu…", #selector(openMenuEditor), enabled: activeHasUserProfile())
         add("Submit to Community…", #selector(openSubmit), enabled: activeHasUserProfile())
         // Raw VCP change log — a developer diagnostic, not needed by end users now
         // that the Teach wizard exists. Debug builds only.
         #if DEBUG
-        add("Listen for Changes…", #selector(openListen), key: "d", enabled: active != nil)
+        submenu.addItem(.separator())
+        add("Listen for Changes…", #selector(openListen), enabled: active != nil)
         #endif
 
         submenu.addItem(.separator())
 
         // Manage the profile files.
         add("Reload Configs", #selector(reloadConfigs))
-        add("Open Monitors Folder", #selector(openMonitorsFolder))
+        add("Open Configs Folder", #selector(openMonitorsFolder))
 
         submenu.addItem(.separator())
 
@@ -476,18 +538,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// itself, then again when the fresh values land.
     private func refreshAfterChange() {
         rebuildMenu()
-        active?.refreshAll { [weak self] in self?.rebuildMenu() }
+        refreshActive(rebuildWhenDone: true)
     }
 
     @objc private func selectDisplay(_ sender: NSMenuItem) {
         guard let ref = sender.representedObject as? DisplayRef else { return }
         active = ref.controller
-        active?.refreshAll { [weak self] in self?.rebuildMenu() }
+        refreshActive(rebuildWhenDone: true)
         rebuildMenu()
     }
 
     @objc private func refresh() {
-        active?.refreshAll { [weak self] in self?.rebuildMenu() }
+        refreshActive(rebuildWhenDone: true)
     }
 
     @objc private func rescan() {
