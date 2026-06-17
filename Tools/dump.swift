@@ -29,7 +29,7 @@ enum DumpTool {
         let match = matches.first { m in
             guard m.service != nil else { return false }
             let name = m.serviceDetails.productName
-            if let config { return config.matches(productName: name) }
+            if let config { return config.matches(productName: name, vendor: nil, product: nil) }
             return name.range(of: "RD280", options: .caseInsensitive) != nil
         }
         guard let match, let service = match.service else {
@@ -44,10 +44,27 @@ enum DumpTool {
 
         print("display : \(match.serviceDetails.productName)")
         print("config  : \(config?.name ?? "(none)")  [\(configPath)]")
+        if let caps = AppleSiliconDDC.readCapabilities(service: service) {
+            print("caps    : \(caps)")
+            let parsed = AppleSiliconDDC.parseVCPCodes(from: caps)
+            let valueLists = parsed
+                .filter { !$0.value.isEmpty }
+                .sorted { $0.key < $1.key }
+                .map { code, values in
+                    let list = values.map { String(format: "%02X", $0) }.joined(separator: " ")
+                    return String(format: "%02X(%@)", code, list)
+                }
+                .joined(separator: " ")
+            if !valueLists.isEmpty { print("values  : \(valueLists)") }
+        }
         print(String(format: "%-4@ %6@  %-8@ %@", "VCP", "dec", "hex", "meaning"))
         print(String(repeating: "─", count: 56))
 
-        for code in DDCProbe.scanCodes {
+        let codes = (DDCProbe.scanCodes + codeMap.keys).reduce(into: [UInt8]()) { out, code in
+            if !out.contains(code) { out.append(code) }
+        }
+
+        for code in codes {
             // Two agreeing reads reject transient bus garbage so diffs are clean.
             guard let a = AppleSiliconDDC.read(service: service, command: code, numOfRetryAttemps: 2),
                   let b = AppleSiliconDDC.read(service: service, command: code, numOfRetryAttemps: 2),
@@ -78,6 +95,14 @@ enum DumpTool {
                 return "\(label)=\(value)"
             }
             return String(format: "ch 0x%02X=%d", channel, value)
+        }
+        let masked = controls.filter { $0.valueMask != nil }
+        if !masked.isEmpty {
+            let parts = masked.compactMap { control -> String? in
+                guard let name = control.label, let value = control.recognise(raw) else { return nil }
+                return "\(name)=\(value)"
+            }
+            if !parts.isEmpty { return parts.joined(separator: " ") }
         }
         let name = controls.first?.label ?? ""
         for control in controls where control.recognise(raw) != nil {

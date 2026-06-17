@@ -6,7 +6,7 @@
   "controls": [
     { "kind": "group", "label": "Coding Booster" },
     { "kind": "section", "label": "Moon Halo" },
-    { "kind": "cycle", "label": "Moon Halo", "vcp": "d7", "noRead": true, "noVerify": true,
+    { "kind": "cycle", "label": "Moon Halo", "vcp": "d7", "valueMask": "0x00ff", "noRead": true, "noVerify": true,
       "options": [
         { "value": "0x30", "label": "Auto" },
         { "value": "0x20", "label": "On" },
@@ -15,6 +15,11 @@
     { "kind": "range", "label": "Brightness", "vcp": "d9", "byte": "low", "min": 1, "max": 10,
       "disableWhen": { "vcp": "d7", "equals": "0x30" } },
     { "kind": "range", "label": "Color Temperature", "vcp": "d9", "byte": "high", "min": 1, "max": 7 },
+    { "kind": "cycle", "label": "Moon Halo Light Mode", "vcp": "d7", "valueMask": "0xff00", "noVerify": true,
+      "options": [
+        { "value": "0x0100", "label": "270°" },
+        { "value": "0x0200", "label": "360°" }
+      ] },
 
     { "kind": "group", "label": "Eye Care" },
     { "kind": "section", "label": "Night Hours Protection" },

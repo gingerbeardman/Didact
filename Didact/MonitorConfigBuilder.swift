@@ -72,7 +72,7 @@ enum MonitorConfigBuilder {
     /// by dividers; anything unrecognised (e.g. discovered MCCS extras) keeps its
     /// order in a final group. The user can rearrange afterwards in Edit Menu.
     private static let defaultGroups: [[String]] = [
-        ["Moon Halo", "Moon Halo Brightness", "Moon Halo Color Temperature"],
+        ["Moon Halo", "Moon Halo Brightness", "Moon Halo Color Temperature", "Moon Halo Light Mode"],
         ["Night Mode", "Night Level", "Low Blue Light", "Sensitivity", "Auto Brightness"],
         ["Color Mode", "Brightness", "Contrast", "Sharpness", "Color Temperature"],
         ["Audio Mute", "Volume"],

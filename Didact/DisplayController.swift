@@ -20,6 +20,7 @@ final class DisplayController {
     private let stableID: String
     private let queue: DispatchQueue
     private var cache: [String: Int] = [:]
+    private var rawCache: [UInt8: Int] = [:]
     private var throttleWork: [String: DispatchWorkItem] = [:]
 
     /// False until the first hardware read completes; the UI disables sliders
@@ -72,10 +73,11 @@ final class DisplayController {
     private func matches(_ cond: Control.Condition) -> Bool {
         if cond.system == "hdr", isHDREnabled { return true }
         guard let vcp = cond.vcp else { return false }
-        let key = "\(vcp.value)/\(cond.channel?.value ?? -1)/"   // matches stateKey (no byte)
-        guard let value = cache[key] else { return false }
-        if let equals = cond.equals, value == equals.value { return true }
-        if let any = cond.equalsAny, any.contains(where: { $0.value == value }) { return true }
+        let prefix = "\(vcp.value)/\(cond.channel?.value ?? -1)/"
+        let values = cache.compactMap { key, value in key.hasPrefix(prefix) ? value : nil }
+        guard !values.isEmpty else { return false }
+        if let equals = cond.equals, values.contains(equals.value) { return true }
+        if let any = cond.equalsAny, values.contains(where: { value in any.contains { $0.value == value } }) { return true }
         return false
     }
 
@@ -83,6 +85,7 @@ final class DisplayController {
     /// invoke `completion` on the main actor.
     func refreshAll(completion: @escaping @MainActor () -> Void) {
         let readable = config.controls.filter { $0.isReadable }
+        let controls = config.controls
         let svc = service
         queue.async {
             var results: [String: Int] = [:]
@@ -90,11 +93,25 @@ final class DisplayController {
                 guard let code = control.featureCode else { continue }
                 if let reply = AppleSiliconDDC.read(service: svc, command: code),
                    let value = control.interpretRead(Int(reply.current)) {
-                    results[control.stateKey] = value
+                    results["raw/\(code)"] = Int(reply.current)
+                    let masked = controls.filter { $0.featureCode == code && $0.valueMask != nil }
+                    if masked.isEmpty {
+                        results[control.stateKey] = value
+                    } else {
+                        for sibling in masked {
+                            results[sibling.stateKey] = sibling.byteValue(Int(reply.current))
+                        }
+                    }
                 }
             }
             DispatchQueue.main.async {
-                for (k, v) in results { self.cache[k] = v }
+                for (k, v) in results {
+                    if k.hasPrefix("raw/"), let code = UInt8(String(k.dropFirst(4))) {
+                        self.rawCache[code] = v
+                    } else {
+                        self.cache[k] = v
+                    }
+                }
                 self.hasInitialValues = true
                 completion()
             }
@@ -124,21 +141,49 @@ final class DisplayController {
     private func performWrite(_ control: Control, value: Int) {
         guard let code = control.featureCode else { return }
         let payload: UInt16
-        if control.byte != nil {
+        if control.valueMask != nil {
+            let raw = rawCache[code]
+            let siblings = config.controls.filter { $0.featureCode == code && $0.valueMask != nil }
+            let cacheSnapshot = cache
+            let svc = service
+            queue.async {
+                var reg = raw ?? Int(AppleSiliconDDC.read(service: svc, command: code, numOfRetryAttemps: 2)?.current ?? 0)
+                for sibling in siblings {
+                    guard let siblingMask = sibling.valueMask?.value else { continue }
+                    let v = sibling.stateKey == control.stateKey
+                        ? value
+                        : (cacheSnapshot[sibling.stateKey] ?? sibling.byteValue(reg))
+                    reg = (reg & ~siblingMask) | (v & siblingMask)
+                }
+                _ = AppleSiliconDDC.write(service: svc, command: code, value: UInt16(reg & 0xFFFF))
+                DispatchQueue.main.async { self.rawCache[code] = reg }
+            }
+            return
+        } else if control.byte != nil {
             // Packed 16-bit register (e.g. d9 = (temp<<8)|brightness): write all
             // of this register's byte-controls together — this control's new
-            // value plus the siblings' current cached values — or the other byte
-            // gets clobbered.
-            var reg = 0
-            for sibling in config.controls where sibling.featureCode == code && sibling.byte != nil {
-                let v = (sibling.stateKey == control.stateKey) ? value : (cache[sibling.stateKey] ?? sibling.min ?? 0)
-                switch sibling.byte {
-                case .high: reg |= (v & 0xFF) << 8
-                case .low: reg |= (v & 0xFF)
-                case nil: break
+            // value plus the siblings' current cached/raw values — or the other
+            // byte gets clobbered.
+            let raw = rawCache[code]
+            let siblings = config.controls.filter { $0.featureCode == code && $0.byte != nil }
+            let cacheSnapshot = cache
+            let svc = service
+            queue.async {
+                var reg = raw ?? Int(AppleSiliconDDC.read(service: svc, command: code, numOfRetryAttemps: 2)?.current ?? 0)
+                for sibling in siblings {
+                    let v = sibling.stateKey == control.stateKey
+                        ? value
+                        : (cacheSnapshot[sibling.stateKey] ?? sibling.byteValue(reg))
+                    switch sibling.byte {
+                    case .high: reg = (reg & 0x00FF) | ((v & 0xFF) << 8)
+                    case .low: reg = (reg & 0xFF00) | (v & 0xFF)
+                    case nil: break
+                    }
                 }
+                _ = AppleSiliconDDC.write(service: svc, command: code, value: UInt16(reg & 0xFFFF))
+                DispatchQueue.main.async { self.rawCache[code] = reg }
             }
-            payload = UInt16(reg & 0xFFFF)
+            return
         } else if let channel = control.channelByte {
             payload = (UInt16(channel) << 8) | UInt16(value & 0xFF)
         } else {

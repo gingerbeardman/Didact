@@ -55,7 +55,7 @@ enum KnownProfileMatcher {
             for control in coded where !isPerfectMatch(control, capabilities) {
                 guard let code = control.featureCode, capabilities[code] != nil,
                       byKey[control.stateKey] == nil else { continue }
-                let multiplexed = control.byte != nil || control.channel != nil
+                let multiplexed = control.byte != nil || control.channel != nil || control.valueMask != nil
                 let bareCycle = control.kind == .cycle && (capabilities[code]?.isEmpty ?? true)
                 if multiplexed || bareCycle { byKey[control.stateKey] = control }
             }
@@ -108,7 +108,7 @@ enum KnownProfileMatcher {
 
     private static func isPerfectMatch(_ control: Control, _ caps: [UInt8: [Int]]) -> Bool {
         guard let code = control.featureCode, let values = caps[code] else { return false }
-        guard control.byte == nil, control.channel == nil else { return false }   // can't verify multiplexed
+        guard control.byte == nil, control.channel == nil, control.valueMask == nil else { return false }   // can't verify shared-register controls
         switch control.kind {
         case .range:
             // A continuous feature, or a stepped range whose advertised steps all

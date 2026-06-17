@@ -151,6 +151,14 @@ final class DDCListener {
             }
             return String(format: "ch 0x%02X=%d", channel, value)
         }
+        let masked = controls.filter { $0.valueMask != nil }
+        if !masked.isEmpty {
+            let parts = masked.compactMap { control -> String? in
+                guard let name = control.label, let value = control.recognise(raw) else { return nil }
+                return "\(name)=\(value)"
+            }
+            if !parts.isEmpty { return parts.joined(separator: " ") }
+        }
         for control in controls {
             if let label = control.recognise(raw) { return label }
         }

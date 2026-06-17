@@ -9,6 +9,7 @@ BIN="$ROOT/build/btnq-dump"
 SOURCES=(
   "$SRC/AppleSiliconDDC.swift"
   "$SRC/AppleSiliconDDCBridge.swift"
+  "$SRC/AppleSiliconDDC+Capabilities.swift"
   "$SRC/DDCProbe.swift"
   "$SRC/MonitorConfig.swift"
   "$ROOT/Tools/dump.swift"

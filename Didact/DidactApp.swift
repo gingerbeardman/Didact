@@ -504,14 +504,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(MonitorConfigStore.userDirectory)
     }
 
+    /// Show a Dock icon (so the app can be ⌘-Tabbed to) while any of our real
+    /// windows is open; drop back to a menu-bar-only agent once they're all closed.
+    private func updateDockVisibility() {
+        let anyOpen = teachWindow != nil || menuEditorWindow != nil || listenWindow != nil
+        NSApp.setActivationPolicy(anyOpen ? .regular : .accessory)
+    }
+
     @objc private func openListen() {
         guard let active else { return }
         if listenWindow == nil {
             listenWindow = ListenWindowController(
                 title: active.productName,
                 makeListener: { onLog in active.makeListener(onLog: onLog) },
-                onClose: { [weak self] in self?.listenWindow = nil })
+                onClose: { [weak self] in self?.listenWindow = nil; self?.updateDockVisibility() })
         }
+        updateDockVisibility()
         listenWindow?.show()
     }
 
@@ -574,12 +582,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menuEditorWindow = MenuEditorWindowController(
                 config: active.config,
                 onSaved: { [weak self] _ in self?.reloadConfigs() },
-                onClose: { [weak self] in
-                    self?.menuEditorWindow = nil
-                    NSApp.setActivationPolicy(.accessory)
-                })
+                onClose: { [weak self] in self?.menuEditorWindow = nil; self?.updateDockVisibility() })
         }
-        NSApp.setActivationPolicy(.regular)   // show in Dock while the editor is open
+        updateDockVisibility()
         menuEditorWindow?.show()
     }
 
@@ -626,15 +631,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.reloadConfigs()
                     self?.openMenuEditor()   // final step: arrange/hide/group the menu
                 },
-                onClose: { [weak self] in
-                    self?.teachWindow = nil
-                    // Back to a menu-bar-only agent — unless the editor just opened.
-                    if self?.menuEditorWindow == nil { NSApp.setActivationPolicy(.accessory) }
-                })
+                onClose: { [weak self] in self?.teachWindow = nil; self?.updateDockVisibility() })
         }
-        // The wizard is a real window the user works in — show a Dock icon while it's
-        // open so it can be ⌘-Tabbed to, then drop back to .accessory on close.
-        NSApp.setActivationPolicy(.regular)
+        updateDockVisibility()
         teachWindow?.show()
     }
 

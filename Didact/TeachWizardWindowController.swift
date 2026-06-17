@@ -27,7 +27,11 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let onSaved: () -> Void   // reload configs so the monitor lights up
     private let onClose: () -> Void
 
-    private let templates = ControlTemplate.all
+    private var templates: [ControlTemplate] {
+        ControlTemplate.all.filter {
+            isRDSeries || $0.label.caseInsensitiveCompare("Moon Halo") != .orderedSame
+        }
+    }
     private var autoFilled: [Control] = []      // confirmed from a known profile
     private var includeAutoFilled = true            // user can drop the auto-filled extras at the summary
     private var recognizedProfile: MonitorConfig?   // monitor matched a known profile distinctively
@@ -189,7 +193,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 430),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
         window.title = "Set Up — \(monitorName)"
@@ -324,7 +328,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             // width between Welcome, the steps, and the summary. A fixed size makes
             // every screen identical and forces the long copy to wrap.
             content.widthAnchor.constraint(equalToConstant: 600),
-            content.heightAnchor.constraint(equalToConstant: 420),
+            content.heightAnchor.constraint(equalToConstant: 430),
 
             progress.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             progress.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
@@ -1131,13 +1135,13 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         if useRecognized, let profile = recognizedProfile {
             return MonitorConfig(
                 name: monitorName, match: [monitorName], edid: edid, controls: profile.controls,
-                comment: "Matched to Didact's verified “\(profile.name)” profile.",
+                comment: "Matched to Didact's verified \"\(profile.name)\" profile.",
                 schemaVersion: profile.schemaVersion ?? 1)
         }
         let config = MonitorConfigBuilder.build(name: monitorName, learned: orderedLearned(),
                                                 extras: (includeAutoFilled ? autoFilled : []) + discovered + rdSeriesExtras(),
                                                 orderedLike: recognizedProfile, edid: edid)
-        return isRDSeries ? withRDColorMode(config) : config
+        return isRDSeries ? withRDSharedRegisterMasks(withRDColorMode(config)) : config
     }
 
     /// The RD-series Color Mode order as it appears in the monitor's OSD.
@@ -1191,13 +1195,25 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func rdSeriesExtras() -> [Control] {
         var extras: [Control] = []
 
+        if isRDSeries, capsCodes.contains(0xD7) {
+            if !orderedLearned().contains(where: { $0.template.label.caseInsensitiveCompare("Moon Halo") == .orderedSame }) {
+                extras.append(Control(kind: .cycle, label: "Moon Halo", vcp: HexValue(0xD7), valueMask: HexValue(0x00FF),
+                                      options: [.init(value: HexValue(0x30), label: "Auto"),
+                                                .init(value: HexValue(0x20), label: "On"),
+                                                .init(value: HexValue(0x10), label: "Off")],
+                                      noRead: true, noVerify: true))
+            }
+            extras.append(Control(kind: .cycle, label: "Moon Halo Light Mode", vcp: HexValue(0xD7), valueMask: HexValue(0xFF00),
+                                  options: [.init(value: HexValue(0x0100), label: "270°"),
+                                            .init(value: HexValue(0x0200), label: "360°")],
+                                  noVerify: true))
+        }
+
         // Moon Halo's own backlight brightness + colour temp, packed into d9
         // (high/low byte) — distinct from the monitor's main Brightness/Colour Temp.
         // Brightness is read-only while Moon Halo is on Auto (it drives it itself).
-        if capsCodes.contains(0xD9),
-           let moon = orderedLearned().first(where: { $0.template.label.caseInsensitiveCompare("Moon Halo") == .orderedSame }) {
-            let auto = moon.options?.first(where: { $0.label.range(of: "Auto", options: .caseInsensitive) != nil })?.value
-            let disable = auto.map { Control.Condition(vcp: HexValue(Int(moon.code)), equals: HexValue($0)) }
+        if isRDSeries, capsCodes.contains(0xD9) {
+            let disable = Control.Condition(vcp: HexValue(0xD7), equals: HexValue(0x30))
             extras.append(Control(kind: .range, label: "Moon Halo Brightness", vcp: HexValue(0xD9), byte: .low,
                                   min: 1, max: 10, disableWhen: disable))
             extras.append(Control(kind: .range, label: "Moon Halo Color Temperature", vcp: HexValue(0xD9), byte: .high,
@@ -1235,6 +1251,20 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                                   onValue: HexValue(255), offValue: HexValue(0), noRead: true, hideWhen: eyeHide))
         }
         return extras
+    }
+
+    private func withRDSharedRegisterMasks(_ config: MonitorConfig) -> MonitorConfig {
+        guard isRDSeries else { return config }
+        let controls = config.controls.map { control -> Control in
+            guard control.label?.caseInsensitiveCompare("Moon Halo") == .orderedSame,
+                  control.featureCode == 0xD7,
+                  control.valueMask == nil else { return control }
+            var copy = control
+            copy.valueMask = HexValue(0x00FF)
+            return copy
+        }
+        return MonitorConfig(name: config.name, match: config.match, edid: config.edid,
+                             controls: controls, comment: config.comment, schemaVersion: config.schemaVersion)
     }
 
     private func orderedLearned() -> [LearnedControl] {

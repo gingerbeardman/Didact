@@ -90,6 +90,7 @@ struct Control: Codable {
     var channel: HexValue? = nil // high byte for channel-multiplexed writes (chan<<8 | value)
     var byte: ByteSelector? = nil // which byte this control occupies in a packed 16-bit register
                                 // (e.g. d9 = (temp<<8)|brightness): read and written together
+    var valueMask: HexValue? = nil // bit mask for controls that share one raw register
 
     // range
     var min: Int? = nil
@@ -144,9 +145,11 @@ struct Control: Codable {
     var isReadable: Bool { vcp != nil && noRead != true && !isHeader }
 
     /// Stable key identifying this control's value within a display (a feature
-    /// code can back two controls — Moon Halo brightness vs. color temp both
-    /// live on d9, distinguished by channel or packed byte).
-    var stateKey: String { "\(vcp?.value ?? -1)/\(channel?.value ?? -1)/\(byte?.rawValue ?? "")" }
+    /// code can back more than one control — distinguished by channel, packed
+    /// byte, or a bit mask over a shared raw register.
+    var stateKey: String {
+        "\(vcp?.value ?? -1)/\(channel?.value ?? -1)/\(byte?.rawValue ?? "")/\(valueMask?.value ?? -1)"
+    }
 
     /// Interpret a raw read value against this control: returns a human label
     /// (option name / "On" / "Off" / the in-range number) when the value is one
@@ -172,12 +175,15 @@ struct Control: Codable {
 
     /// Extract this control's portion of a raw register value: the high or low
     /// byte for a packed register (`byte`), the low byte for a channel-multiplexed
-    /// register, otherwise the whole value.
+    /// register, a masked portion for a shared register, otherwise the whole value.
     func byteValue(_ raw: Int) -> Int {
         switch byte {
         case .high: return (raw >> 8) & 0xFF
         case .low: return raw & 0xFF
-        case nil: return channelByte != nil ? (raw & 0xFF) : raw
+        case nil:
+            if channelByte != nil { return raw & 0xFF }
+            if let mask = valueMask?.value { return raw & mask }
+            return raw
         }
     }
 

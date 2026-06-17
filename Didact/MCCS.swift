@@ -83,10 +83,10 @@ enum MCCS {
         0x8C: MCCSCode(name: "Sharpness",                    writable: true,  continuous: true,  safe: true),
 
         // Backlight levels
-        0x6B: MCCSCode(name: "Backlight Level: White",       writable: true,  continuous: true,  safe: true),
-        0x6D: MCCSCode(name: "Backlight Level: Red",         writable: true,  continuous: true,  safe: true),
-        0x6F: MCCSCode(name: "Backlight Level: Green",       writable: true,  continuous: true,  safe: true),
-        0x71: MCCSCode(name: "Backlight Level: Blue",        writable: true,  continuous: true,  safe: true),
+        0x6B: MCCSCode(name: "Backlight Level: White",       writable: true,  continuous: true,  safe: false),
+        0x6D: MCCSCode(name: "Backlight Level: Red",         writable: true,  continuous: true,  safe: false),
+        0x6F: MCCSCode(name: "Backlight Level: Green",       writable: true,  continuous: true,  safe: false),
+        0x71: MCCSCode(name: "Backlight Level: Blue",        writable: true,  continuous: true,  safe: false),
 
         // Color
         0x0B: MCCSCode(name: "Color Temperature Increment",  writable: false, continuous: false, safe: false),
@@ -95,10 +95,10 @@ enum MCCS {
         0x14: MCCSCode(name: "Color Preset",                 writable: true,  continuous: false, safe: true,
                        values: [0x01: "sRGB", 0x02: "Native", 0x03: "4000K", 0x04: "5000K",
                                 0x05: "6500K", 0x06: "7500K", 0x08: "9300K", 0x0B: "User"]),
-        0x16: MCCSCode(name: "Video Gain: Red",              writable: true,  continuous: true,  safe: true),
+        0x16: MCCSCode(name: "Video Gain: Red",              writable: true,  continuous: true,  safe: false),
         0x17: MCCSCode(name: "User Vision Compensation",     writable: true,  continuous: true,  safe: true),
-        0x18: MCCSCode(name: "Video Gain: Green",            writable: true,  continuous: true,  safe: true),
-        0x1A: MCCSCode(name: "Video Gain: Blue",             writable: true,  continuous: true,  safe: true),
+        0x18: MCCSCode(name: "Video Gain: Green",            writable: true,  continuous: true,  safe: false),
+        0x1A: MCCSCode(name: "Video Gain: Blue",             writable: true,  continuous: true,  safe: false),
         0x1F: MCCSCode(name: "Auto Color Setup",             writable: true,  continuous: false, safe: false),
         0x2E: MCCSCode(name: "Grey Scale Expansion",         writable: true,  continuous: false, safe: true),
         0x6C: MCCSCode(name: "Video Black Level: Red",       writable: true,  continuous: true,  safe: true),
