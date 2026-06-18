@@ -14,10 +14,10 @@ in a shareable JSON profile — so new monitors need **no code changes**.
 
 |           | Didact       | Display Pilot 2 |
 |-----------|:----------:|:---------------:|
-| Download  | **529 KB** | 404 MB          |
+| Download  | **517 KB** | 404 MB          |
 | Installed | **578 KB** | 936 MB          |
 
-…about **760× smaller to download** and **over 1,600× smaller installed**, for the
+…about **800× smaller to download** and **over 1,600× smaller installed**, for the
 controls you actually use.
 
 ## Requirements
