@@ -148,6 +148,18 @@ main() {
     print_success "Build complete!"
     echo "  App: $APP_PATH"
     echo "  DMG: $DMG_PATH"
+    echo ""
+    print_step "Reminder: update README size figures"
+    echo "  The 'Didact vs Display Pilot' table and the smaller-than multipliers"
+    echo "  depend on this build. Refresh them from these exact numbers:"
+    local dl_bytes; dl_bytes=$(stat -f%z "$DMG_PATH")
+    echo "  • Download (DMG):            $(du -h "$DMG_PATH" | cut -f1)  (${dl_bytes} bytes)"
+    # Installed = HFS-compressed app size on disk (what a drag-install leaves).
+    local tmp; tmp=$(mktemp -d)
+    ditto --hfsCompression "$APP_PATH" "$tmp/$APP_NAME.app" 2>/dev/null
+    echo "  • Installed (HFS-compressed): $(du -h "$tmp/$APP_NAME.app" | cut -f1)  ($(du -k "$tmp/$APP_NAME.app" | cut -f1) KiB)"
+    rm -rf "$tmp"
+    echo "  Sizes in the README are decimal KB (bytes ÷ 1000)."
 }
 
 main "$@"
