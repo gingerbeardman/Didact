@@ -65,6 +65,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var doneButton: NSButton?
     private var includeExtrasCheckbox: NSButton?   // summary: drop the auto-filled extras
     private var copyButton: NSButton?              // DEBUG: copy the profile to the clipboard
+    private var manualButton: NSButton?            // DEBUG: skip detection, step through manually
 
     // State
     private var index = 0
@@ -175,13 +176,17 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         You’ll test each control as you go, skip any your monitor doesn’t have, then save at the end — and optionally share it so others with this monitor benefit.
         """
 
-        backButton?.isEnabled = false
+        setBackAvailable(false)
         retryButton?.isHidden = true
         skipButton?.isHidden = true
         doneButton?.isHidden = true
         primaryButton?.isHidden = false
         primaryButton?.title = "Start"
         primaryButton?.isEnabled = false
+        #if DEBUG
+        manualButton?.isHidden = false
+        manualButton?.isEnabled = false
+        #endif
 
         setStatus("Reading your monitor’s capabilities…")
         spinner?.startAnimation(nil)
@@ -192,6 +197,9 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         spinner?.stopAnimation(nil)
         setStatus("Ready when you are.", color: .systemGreen)
         primaryButton?.isEnabled = true
+        #if DEBUG
+        manualButton?.isEnabled = true
+        #endif
     }
 
     // MARK: - Window
@@ -311,13 +319,18 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
         let leftButtons = NSStackView(views: [back])
         leftButtons.translatesAutoresizingMaskIntoConstraints = false
-        var rightItems: [NSView] = [retry, skip, primary, done]
+        var rightItems: [NSView] = [retry, skip, done, primary]
         #if DEBUG
         let copy = NSButton(title: "Copy", target: self, action: #selector(copyTapped))
         copy.bezelStyle = .rounded
         copy.isHidden = true
         self.copyButton = copy
-        rightItems.insert(copy, at: 2)   // sits just before the Save/Submit primary
+        rightItems.insert(copy, at: 2)   // review screen reads: Copy, Close, Save (default)
+        let manual = NSButton(title: "Teach Manually", target: self, action: #selector(teachManuallyTapped))
+        manual.bezelStyle = .rounded
+        manual.isHidden = true
+        self.manualButton = manual
+        rightItems.insert(manual, at: rightItems.count - 1)   // welcome screen: sits left of Start
         #endif
         let rightButtons = NSStackView(views: rightItems)
         rightButtons.translatesAutoresizingMaskIntoConstraints = false
@@ -409,7 +422,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         primaryButton?.isHidden = true
         doneButton?.isHidden = true
         copyButton?.isHidden = true
-        backButton?.isEnabled = false
+        setBackAvailable(false)
         autoAcceptNext(0, startedAt: detectingStartedAt)
     }
 
@@ -462,7 +475,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         let pos = pending.firstIndex(of: index) ?? 0
         progressLabel?.stringValue = "Step \(pos + 1) of \(pending.count)"
         titleLabel?.stringValue = template.label
-        backButton?.isEnabled = pos > 0
+        setBackAvailable(pos > 0)
         doneButton?.isHidden = true
 
         // If this step was already learned (e.g. we came back to it), restore its
@@ -947,7 +960,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         statusLabel?.isHidden = false
         retryButton?.isHidden = true; skipButton?.isHidden = true
         primaryButton?.isHidden = true; doneButton?.isHidden = true; copyButton?.isHidden = true
-        backButton?.isEnabled = false
+        setBackAvailable(false)
         titleLabel?.stringValue = "More controls"
         progressLabel?.stringValue = "Almost done"
         instructionLabel?.stringValue = "Scanning your monitor’s capabilities for extra controls…"
@@ -980,7 +993,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         if !discoveryBuilt { buildDiscoveryRows(codes); discoveryBuilt = true }
         discoveryScroll?.isHidden = false
 
-        backButton?.isEnabled = !pendingSteps.isEmpty   // nowhere to go back to if all auto-accepted
+        setBackAvailable(!pendingSteps.isEmpty)   // nowhere to go back to if all auto-accepted
         retryButton?.isHidden = true
         skipButton?.isHidden = true
         doneButton?.isHidden = true
@@ -1088,10 +1101,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 lines.append("✓ \(control.label ?? "Control") — \(code) (\(control.kind.rawValue))")
             }
             summaryTextView?.string = lines.joined(separator: "\n")
-            backButton?.isEnabled = false
+            setBackAvailable(false)
             // Offer a manual path for variants / testing.
             retryButton?.isHidden = saved
-            retryButton?.title = "Teach Manually Instead"
+            retryButton?.title = "Teach Manually"
         } else {
             titleLabel?.stringValue = saved ? "Saved" : "Review & Save"
             var lines: [String] = []
@@ -1144,7 +1157,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             // Back goes to discovery (if any) or the last step; disabled once saved
             // or when there's nothing earlier to return to.
             let canGoBack = (discoverable.map { !$0.isEmpty } ?? false) || !pendingSteps.isEmpty
-            backButton?.isEnabled = !saved && canGoBack
+            setBackAvailable(!saved && canGoBack)
             retryButton?.isHidden = true
         }
 
@@ -1401,6 +1414,19 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         advance()
     }
 
+    #if DEBUG
+    /// DEBUG-only welcome-screen shortcut: skip the recognized-profile / auto-accept
+    /// path and step through every control manually — the same flow the recognized
+    /// summary's "Teach Manually" button enters, but reachable on any monitor.
+    @objc private func teachManuallyTapped() {
+        onIntro = false
+        manualButton?.isHidden = true
+        useRecognized = false
+        index = 0
+        showStep()
+    }
+    #endif
+
     @objc private func retryTapped() {
         // On the recognized-profile summary this button means "ignore the match
         // and teach manually" — drop into the normal stepping flow.
@@ -1450,6 +1476,9 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     @objc private func primaryTapped() {
         if onIntro {                            // Start → recognized profile or teaching
             onIntro = false
+            #if DEBUG
+            manualButton?.isHidden = true
+            #endif
             if recognizedProfile != nil {
                 useRecognized = true
                 index = templates.count         // we're on the final summary, not a step
@@ -1511,6 +1540,14 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func setStatus(_ text: String, color: NSColor = .labelColor) {
         statusLabel?.stringValue = text
         statusLabel?.textColor = color
+    }
+
+    /// Show Back only when there's somewhere to return to. A disabled `.rounded`
+    /// button renders as a faint, narrow stub (especially in dark mode), so hide
+    /// it rather than grey it out.
+    private func setBackAvailable(_ available: Bool) {
+        backButton?.isEnabled = available
+        backButton?.isHidden = !available
     }
 
     private static func hex(_ code: UInt8) -> String { String(format: "0x%02X", code) }
