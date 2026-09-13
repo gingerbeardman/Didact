@@ -5,6 +5,87 @@
   "comment": "DDC/VCP map for the BenQ RD280UG. Group/section order mirrors the monitor's own OSD menu. 'vcp' and hex string values are hexadecimal; plain JSON numbers are decimal. Drop additional <model>.json files into ~/Library/Application Support/BtnQ/Monitors/ to add monitors with no code changes.",
   "controls": [
     { "kind": "group", "label": "Coding Booster" },
+    { "kind": "section", "label": "EcoPrivacy" },
+    { "kind": "toggle", "label": "EcoPrivacy (5 Sec.)", "vcp": "e7", "onValue": 5, "offValue": 0 },
+    {
+      "kind" : "cycle",
+      "label" : "Mode",
+      "noRead" : false,
+      "noVerify" : false,
+      "options" : [
+        {
+          "label" : "Display",
+          "value" : 2
+        },
+        {
+          "label" : "Dispaly + MoonHalo",
+          "value" : 1
+        }
+      ],
+      "vcp" : "e8"
+    },
+    {
+      "kind" : "cycle",
+      "label" : "Activation Time",
+      "noRead" : false,
+      "noVerify" : false,
+      "options" : [
+        {
+          "label" : "5 Sec.",
+          "value" : 5
+        },
+        {
+          "label" : "10 Sec.",
+          "value" : 10
+        },
+        {
+          "label" : "20 Sec.",
+          "value" : 20
+        },
+        {
+          "label" : "30 Sec.",
+          "value" : 30
+        },
+        {
+          "label" : "1 Min.",
+          "value" : 60
+        },
+        {
+          "label" : "5 Min.",
+          "value" : 80
+        },
+        {
+          "label" : "10 Min.",
+          "value" : 160
+        },
+        {
+          "label" : "OFF",
+          "value" : 0
+        }
+      ],
+      "vcp" : "e7"
+    },
+    {
+      "kind" : "cycle",
+      "label" : "Sensor Sensitivity",
+      "noRead" : false,
+      "noVerify" : false,
+      "options" : [
+        {
+          "label" : "Near",
+          "value" : 1
+        },
+        {
+          "label" : "Middle",
+          "value" : 2
+        },
+        {
+          "label" : "Far",
+          "value" : 3
+        }
+      ],
+      "vcp" : "e9"
+    },
     { "kind": "section", "label": "Moon Halo" },
     { "kind": "cycle", "label": "Moon Halo", "vcp": "d7", "valueMask": "0x00ff", "noRead": true, "noVerify": true,
       "options": [
