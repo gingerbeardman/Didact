@@ -1,12 +1,3 @@
-//
-//  MediaKeySetupView.swift
-//  Didact
-//
-//  The media-key choice shown in the first-run setup wizard. The explanation is
-//  deliberately next to the master switch: macOS only grants Accessibility from
-//  an explicit request, and the user should know exactly what is read before the
-//  system prompt appears.
-//
 
 import AppKit
 import ApplicationServices
@@ -86,8 +77,6 @@ final class MediaKeySetupView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Re-read the system state whenever the step is shown; the user may have
-    /// granted or revoked access since the wizard was built.
     func refreshPermissionStatus() {
         let trusted = AXIsProcessTrusted()
         permissionLabel.stringValue = trusted
@@ -115,7 +104,6 @@ final class MediaKeySetupView: NSView {
         brightnessButton.state = settings.brightnessEnabled ? .on : .off
         audioButton.state = settings.audioEnabled ? .on : .off
 
-        // Nothing to enable if both role groups are off.
         masterButton.isEnabled = settings.brightnessEnabled || settings.audioEnabled
         if !masterButton.isEnabled { masterButton.state = .off }
         refreshPermissionStatus()

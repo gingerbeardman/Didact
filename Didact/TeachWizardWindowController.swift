@@ -28,7 +28,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let knownConfigs: [MonitorConfig]   // for auto-filling from known profiles
     private let edid: [MonitorConfig.EDIDMatch]?   // this display's EDID, stamped into the saved profile
     private let displayID: CGDirectDisplayID    // to detect HDR support for the Color Mode step
-    private let readyProfile: MonitorConfig?     // already-active config, first run
+    private let readyProfile: MonitorConfig?
     private let mediaKeySettings: MediaKeySettings
     private let showMediaKeysStep: Bool
     private let onMediaKeySettingsChanged: (MediaKeySettings) -> Void
@@ -151,9 +151,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 guard let self else { return }
                 self.capabilitiesString = capabilities
 
-                // The three lookups below are asynchronous; wait for all of them
-                // before enabling Start. Otherwise a quick click can miss the
-                // recognized-profile result and force a needless teaching pass.
                 let group = DispatchGroup()
 
                 // Auto-fill controls a known profile + the capabilities dump confirm.
@@ -177,8 +174,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 group.notify(queue: .main) { [weak self] in
                     guard let self else { return }
                     if let readyProfile = self.readyProfile {
-                        // The app is already using this monitor's profile; show
-                        // its summary instead of making the user teach it again.
                         self.recognizedProfile = readyProfile
                     }
                     self.prepared = true
@@ -233,7 +228,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
         spinner?.stopAnimation(nil)
         if prepared {
-            // Returning from the media step: don't reset to the reading state.
             introReady()
         } else {
             primaryButton?.isEnabled = false
@@ -252,9 +246,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         #endif
     }
 
-    /// First-run only: the short media-key step between the welcome screen and
-    /// monitor setup. The explanation is deliberately shown before the primary
-    /// button can trigger macOS's Accessibility prompt.
     private func showMediaKeys() {
         resetStepTransients()
         onIntro = false
@@ -288,12 +279,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         #endif
     }
 
-    /// The monitor half of the wizard, shared by a normal Start and the Continue
-    /// after the first-run media-key step.
     private func proceedAfterIntro() {
         if recognizedProfile != nil {
             useRecognized = true
-            index = templates.count         // we're on the final summary, not a step
+            index = templates.count
             showSummary()
         } else {
             autoAcceptThenStep()
@@ -1224,8 +1213,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 lines.append("✓ \(control.label ?? "Control") — \(code) (\(control.kind.rawValue))")
             }
             summaryTextView?.string = lines.joined(separator: "\n")
-            // A first-run ready summary can go back and change the media-key
-            // choices; a regular recognized summary stays a one-way review.
             setBackAvailable(ready && showMediaKeysStep && !saved)
             // Offer a manual path for variants / testing.
             retryButton?.isHidden = saved
@@ -1288,8 +1275,6 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
         skipButton?.isHidden = true
         if ready, !saved {
-            // The active profile is already doing the work; there is nothing to
-            // save. Leave Close/Done as the way out, or Teach Manually.
             primaryButton?.isHidden = true
         } else {
             primaryButton?.isHidden = false
@@ -1519,13 +1504,13 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         // Navigate only — keep whatever was already learned so it's restored. Skip
         // over auto-accepted controls (they have no step).
         let pending = pendingSteps
-        if onMediaKeys {                          // media keys → welcome
+        if onMediaKeys {
             showIntro()
             return
         }
         if index >= templates.count, useRecognized, readyProfile != nil,
            showMediaKeysStep, !saved {
-            showMediaKeys()                       // ready summary → media keys
+            showMediaKeys()
             return
         }
         if onDiscovery {                          // discovery list → back to last step
@@ -1547,7 +1532,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 index = pending[pos - 1]
                 showStep()
             } else if showMediaKeysStep {
-                showMediaKeys()               // first teaching step → media keys
+                showMediaKeys()
             }
         }
     }
@@ -1618,7 +1603,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func primaryTapped() {
-        if onIntro {                            // Start → media keys or monitor setup
+        if onIntro {
             onIntro = false
             #if DEBUG
             manualButton?.isHidden = true
@@ -1628,7 +1613,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             } else {
                 proceedAfterIntro()
             }
-        } else if onMediaKeys {                  // media-key step → monitor setup
+        } else if onMediaKeys {
             proceedAfterMediaKeys()
         } else if awaitingChoice {              // cycle detecting → pick from changes
             chooseManually()

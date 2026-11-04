@@ -1,21 +1,13 @@
-//
-//  MediaKey.swift
-//  Didact
-//
-//  Parsing for the five system-defined keys a monitor can use over DDC:
-//  brightness up/down, volume up/down and mute. macOS delivers these as
-//  NX_SYSDEFINED events (type 14, subtype 8); the key code is in the high word of
-//  data1 and the press state/repeat flag in the low word.
-//
 
 import AppKit
 
+// NX_KEYTYPE_* values.
 enum MediaKey: Int, Equatable {
-    case volumeUp = 0      // NX_KEYTYPE_SOUND_UP
-    case volumeDown = 1    // NX_KEYTYPE_SOUND_DOWN
-    case brightnessUp = 2  // NX_KEYTYPE_BRIGHTNESS_UP
-    case brightnessDown = 3 // NX_KEYTYPE_BRIGHTNESS_DOWN
-    case mute = 7          // NX_KEYTYPE_MUTE
+    case volumeUp = 0
+    case volumeDown = 1
+    case brightnessUp = 2
+    case brightnessDown = 3
+    case mute = 7
 }
 
 struct MediaKeyEvent {
@@ -27,11 +19,8 @@ struct MediaKeyEvent {
 }
 
 enum MediaKeyParser {
-    /// The subtype used by the auxiliary-control (media key) event family.
     static let auxControlSubtype = 8
 
-    /// Parse the raw fields. Kept separate from NSEvent so it can be unit-tested
-    /// without synthesising a system event.
     static func parse(subtype: Int, data1: Int, modifiers: NSEvent.ModifierFlags) -> MediaKeyEvent? {
         guard subtype == auxControlSubtype else { return nil }
 

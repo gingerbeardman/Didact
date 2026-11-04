@@ -1,11 +1,3 @@
-//
-//  MediaKeyTests.swift
-//  DidactTests
-//
-//  Pure-logic tests for the media-key feature: event parsing, standard-role
-//  inference, key steps, target routing and the latest-value write gate. Event
-//  tap, CoreAudio and DDC behaviour still need the manual matrix.
-//
 
 import AppKit
 import CoreGraphics
@@ -14,7 +6,6 @@ import Testing
 @testable import Didact
 
 struct MediaKeyTests {
-    // MARK: - Event parsing
 
     private func data1(_ key: MediaKey, state: Int, repeatKey: Bool = false) -> Int {
         (key.rawValue << 16) | (state << 8) | (repeatKey ? 1 : 0)
@@ -43,8 +34,6 @@ struct MediaKeyTests {
         #expect(MediaKeyParser.parse(subtype: 9, data1: data1(.brightnessUp, state: 0xA), modifiers: []) == nil)
         #expect(MediaKeyParser.parse(subtype: 8, data1: (2 << 16) | (0x1 << 8), modifiers: []) == nil)
     }
-
-    // MARK: - Roles and steps
 
     private func range(_ code: UInt8, min: Int = 0, max: Int = 100, step: Int? = nil) -> Control {
         Control(kind: .range, label: "Control", vcp: HexValue(Int(code)),
@@ -88,8 +77,6 @@ struct MediaKeyTests {
         #expect(range(0x10, min: 0, max: 100, step: 5).keyStep == 6)
         #expect(range(0x10, min: 0, max: 100, step: 10).keyStep == 10)
     }
-
-    // MARK: - Router
 
     private func roleState(_ control: Control,
                            visible: Bool = true,
@@ -282,8 +269,6 @@ struct MediaKeyTests {
         #expect(MediaKeyRouter.display(at: CGPoint(x: 250, y: 50), in: states) == nil)
     }
 
-    // MARK: - Role settings
-
     @Test func masterOffPassesEveryKey() {
         let router = makeRouter(
             displays: [display()],
@@ -362,8 +347,6 @@ struct MediaKeyTests {
         #expect(!saved.masterEnabled)
         #expect(!MediaKeySettingsStore.load(from: defaults).masterEnabled)
     }
-
-    // MARK: - Latest-value coalescer
 
     @Test func coalescerWritesFirstAndLatestOnly() {
         let coalescer = KeyWriteCoalescer()

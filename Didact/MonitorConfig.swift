@@ -60,9 +60,6 @@ struct MonitorConfig: Codable, Identifiable {
         var product: Int
     }
 
-    /// The first control with the given standard role, in profile order. For the
-    /// standard VCP codes this is unambiguous; proprietary siblings (e.g. Moon
-    /// Halo brightness on d9) are ignored because they have a different code.
     func control(forRole role: Control.Role) -> Control? {
         controls.first { $0.role == role }
     }
@@ -87,10 +84,7 @@ struct Control: Codable {
         case toggle    // on/off
     }
 
-    /// The standard control a physical key maps to. Inferred from the VESA MCCS
-    /// feature code, never from the label — a profile can contain more than one
-    /// "Brightness" (the RD280UG has Moon Halo brightness on d9 as well as the
-    /// panel brightness on 10).
+    // Inferred from the VCP code, not the label.
     enum Role: Equatable {
         case brightness
         case volume
@@ -161,9 +155,6 @@ struct Control: Codable {
     var isHeader: Bool { kind == .group || kind == .section }
     var isReadable: Bool { vcp != nil && noRead != true && !isHeader }
 
-    /// The standard control this menu entry represents, if any. Uses the MCCS
-    /// feature code so model-specific controls that happen to share a label are
-    /// never mistaken for the standard one.
     var role: Role? {
         guard let code = featureCode else { return nil }
         switch (kind, code) {
@@ -174,9 +165,7 @@ struct Control: Codable {
         }
     }
 
-    /// How far one press of a physical key moves this control. A sixteenth of the
-    /// range matches the 16-segment OSD used by macOS and other monitor utilities;
-    /// a profile's own step wins when it is coarser.
+    // One sixteenth of the range, unless the profile step is coarser.
     var keyStep: Int {
         guard kind == .range else { return 1 }
         let span = Swift.max(1, (max ?? 100) - (min ?? 0))

@@ -22,11 +22,7 @@ final class DisplayController {
     private var cache: [String: Int] = [:]
     private var rawCache: [UInt8: Int] = [:]
     private var throttleWork: [String: DispatchWorkItem] = [:]
-    /// Bumped on every write so an in-flight refresh can't apply stale reads over
-    /// values a media key has just changed.
     private var writeGeneration = 0
-    /// Media-key writes coalesce to one in-flight DDC write per control; key
-    /// repeats update the cache and leave only the newest value pending.
     private let keyWrites = KeyWriteCoalescer()
     private(set) var lastKeyWriteDate = Date.distantPast
 
@@ -34,9 +30,6 @@ final class DisplayController {
     /// until then so they don't show a default value that snaps to the real one.
     private(set) var hasInitialValues = false
 
-    /// True while a media key is actively changing this display. Used to keep the
-    /// 10-second background refresh from enqueuing a full read in the middle of a
-    /// held key, where it would add latency and then overwrite the optimistic cache.
     var isAdjusting: Bool { Date().timeIntervalSince(lastKeyWriteDate) < 1.5 }
 
     init(displayID: CGDirectDisplayID, service: IOAVService, productName: String,
@@ -63,9 +56,6 @@ final class DisplayController {
         }
     }
 
-    /// The value actually read or written for this control, or nil when nothing
-    /// is known yet. Media keys use this instead of `value(for:)` so a failed
-    /// first read can never make a key jump the monitor to min/off.
     func cachedValue(for control: Control) -> Int? {
         cache[control.stateKey]
     }
@@ -125,9 +115,7 @@ final class DisplayController {
                 }
             }
             DispatchQueue.main.async {
-                // A read that started before a key write must not overwrite the
-                // newer optimistic value. The next refresh will pick up the
-                // hardware truth.
+                // Don't let an older read overwrite a newer key write.
                 if generation == self.writeGeneration {
                     for (k, v) in results {
                         if k.hasPrefix("raw/"), let code = UInt8(String(k.dropFirst(4))) {
@@ -166,10 +154,6 @@ final class DisplayController {
         }
     }
 
-    /// Move a range control by one physical-key step. Uses a leading-edge,
-    /// latest-value coalescer rather than the slider's trailing debounce: the
-    /// first press writes immediately, repeats update the cache immediately, and
-    /// only the newest value waits for the in-flight DDC write to finish.
     func setKey(_ control: Control, to value: Int) {
         guard control.kind == .range else {
             set(control, to: value)

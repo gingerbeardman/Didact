@@ -1,13 +1,3 @@
-//
-//  MediaKeyTap.swift
-//  Didact
-//
-//  A session-level CGEventTap for the five system-defined media keys Didact can
-//  map to DDC controls. The tap runs on its own run loop and does only parsing and
-//  routing; DDC, CoreAudio and AppKit stay on the main actor. Accessibility is
-//  required to create an active (not listen-only) tap, so start() fails cleanly
-//  when the user has not granted it.
-//
 
 import AppKit
 import CoreGraphics
@@ -21,8 +11,6 @@ final class MediaKeyTap {
     private var runLoop: CFRunLoop?
     private var thread: Thread?
     private var swallowed: Set<Int> = []
-    /// `swallowed` and `port` are touched by the tap thread and by start/stop on
-    /// the main thread, so both are guarded.
     private let stateLock = NSLock()
 
     init(handler: @escaping (MediaKeyEvent) -> Bool,
@@ -33,8 +21,6 @@ final class MediaKeyTap {
 
     deinit { stop() }
 
-    /// Create the tap and start its run loop. Returns false when the tap could not
-    /// be created — normally because Accessibility is missing.
     @discardableResult
     func start() -> Bool {
         stop()
@@ -42,7 +28,7 @@ final class MediaKeyTap {
         swallowed.removeAll()
         stateLock.unlock()
 
-        let mask = CGEventMask(1 << 14) // NX_SYSDEFINED
+        let mask = CGEventMask(1) << CGEventMask(NSEvent.EventType.systemDefined.rawValue)
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -114,8 +100,6 @@ final class MediaKeyTap {
         let code = parsed.key.rawValue
 
         if parsed.isUp {
-            // Swallow the release only for a press we took, so a key we passed
-            // through stays consistent.
             stateLock.lock()
             let wasSwallowed = swallowed.remove(code) != nil
             stateLock.unlock()
@@ -126,8 +110,6 @@ final class MediaKeyTap {
         let alreadySwallowed = swallowed.contains(code)
         stateLock.unlock()
 
-        // A hold only belongs to Didact if its initial press was taken. Don't
-        // start mid-hold just because the target became available on a repeat.
         if parsed.isRepeat, !alreadySwallowed {
             return Unmanaged.passUnretained(event)
         }

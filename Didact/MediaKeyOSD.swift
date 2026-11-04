@@ -1,11 +1,3 @@
-//
-//  MediaKeyOSD.swift
-//  Didact
-//
-//  One small, fixed-style on-screen display for media-key changes: an icon and a
-//  16-segment bar. Deliberately not the private OSDUIHelper used by some monitor
-//  utilities — that API has broken across macOS releases.
-//
 
 import AppKit
 

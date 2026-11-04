@@ -1,13 +1,3 @@
-//
-//  MediaKeySettings.swift
-//  Didact
-//
-//  Which physical media keys Didact is allowed to take over. The master switch
-//  is deliberately separate from the two role switches: both roles default to on
-//  so enabling the feature is a single explicit action, and a user who only wants
-//  brightness (or only audio) can turn the other role off without losing the
-//  master setting.
-//
 
 import Foundation
 
@@ -16,13 +6,10 @@ struct MediaKeySettings: Equatable {
     var brightnessEnabled: Bool = true
     var audioEnabled: Bool = true
 
-    /// True only when the tap has something to do.
     var isActive: Bool {
         masterEnabled && (brightnessEnabled || audioEnabled)
     }
 
-    /// A master switch with both role groups off would request Accessibility for
-    /// nothing, so normalize it away.
     var normalized: MediaKeySettings {
         guard !brightnessEnabled, !audioEnabled else { return self }
         var copy = self
@@ -32,7 +19,6 @@ struct MediaKeySettings: Equatable {
 }
 
 enum MediaKeySettingsStore {
-    /// The existing key, kept so anyone already testing the feature retains it.
     static let masterKey = "mediaKeysEnabled"
     static let brightnessKey = "mediaKeyBrightnessEnabled"
     static let audioKey = "mediaKeyAudioEnabled"

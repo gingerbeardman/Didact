@@ -36,7 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshInFlight = false
     private var refreshTimer: Timer?
 
-    // Media keys (brightness/volume/mute)
     private enum DefaultsKey {
         static let setupWizardSeen = "hasSeenSetupWizard"
     }
@@ -74,13 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
-        // Onboard at startup. The first launch shows the full setup wizard even
-        // when the monitor is already recognized, so the media-key offer is not
-        // limited to people whose monitor needed teaching. After that, open the
-        // teach wizard when there's no supported monitor to control (so an
-        // unknown display can be set up), and always in debug builds so the
-        // wizard is easy to iterate on. Guarded so it never pops the "no display"
-        // alert when nothing teachable is connected.
         let firstRun = !UserDefaults.standard.bool(forKey: DefaultsKey.setupWizardSeen)
         #if DEBUG
         let autoTeach = true
@@ -164,8 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func backgroundRefreshTick() {
-        // A refresh queued in the middle of a held key would delay the key writes
-        // and then read back over them. Let the keys settle first.
         guard Date().timeIntervalSince(lastMediaKeyAdjustment) > 1.5,
               displays.allSatisfy({ !$0.isAdjusting }) else { return }
         refreshActive(rebuildWhenDone: false)
@@ -688,12 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openTeach(showMediaKeys: false)
     }
 
-    /// First-run setup opens the wizard once, even for a recognized monitor, so
-    /// the media-key offer is not hidden from people who don't need to teach one.
     private func maybeShowFirstRunWizard() {
-        // `displays` only contains monitors with a matching config, so don't use
-        // it as the gate here: an unrecognized monitor is exactly the case that
-        // needs the wizard. teachableServiceExists() covers both.
         guard !UserDefaults.standard.bool(forKey: DefaultsKey.setupWizardSeen),
               teachWindow == nil, !isMenuOpen,
               teachableServiceExists() else { return }
@@ -807,16 +792,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                               readyProfile: MonitorConfig?) {
         let (vendor, product) = Self.edidIDs(for: displayID)
         let edid = (vendor != nil && product != nil) ? [MonitorConfig.EDIDMatch(vendor: vendor!, product: product!)] : nil
-        // The first-run path should recognize an already-working user profile so
-        // it can go straight to the summary instead of re-teaching it. A manual
-        // re-teach keeps using only curated bundled profiles, so a user's own
-        // earlier (possibly wrong) profile can't feed its mistakes back in.
         let knownConfigs = showMediaKeys
             ? MonitorConfigStore.load()
             : MonitorConfigStore.loadBundled()
         if showMediaKeys {
-            // Mark on presentation, not on close: quitting with the window open
-            // should not bring the first-run wizard back on the next launch.
             markSetupWizardSeen()
         }
         if teachWindow == nil {
@@ -830,8 +809,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     guard let self else { return }
                     self.applyMediaKeySettings(settings)
                     if self.mediaKeySettings.masterEnabled, !AXIsProcessTrusted() {
-                        // The wizard already showed the explanation next to the
-                        // switch; this is the explicit enable that asks macOS.
                         self.requestAccessibility()
                         self.startAXPolling()
                     }
@@ -855,8 +832,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         iconName = symbol   // setter updates the status icon
         rebuildMenu()
     }
-
-    // MARK: - Media keys
 
     private func setupMediaKeys() {
         audioMonitor.start { [weak self] in self?.refreshMediaKeySnapshot() }
@@ -912,9 +887,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    /// Save a settings change and make the tap match it. The router snapshot is
-    /// refreshed immediately so a key pressed right after the menu closes sees
-    /// the new role flags.
     private func applyMediaKeySettings(_ settings: MediaKeySettings) {
         mediaKeySettings = MediaKeySettingsStore.save(settings)
         refreshMediaKeySnapshot()
@@ -941,7 +913,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        // Don't ask for system access before there's a monitor to control.
         guard !displays.isEmpty else { return }
         guard confirmAccessibilityExplanation() else { return }
 
@@ -967,9 +938,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyMediaKeySettings(settings)
     }
 
-    /// Explain what Accessibility is used for before macOS shows its own prompt.
-    /// Only needed when access is missing; if it is already granted, enabling the
-    /// feature is silent.
     private func confirmAccessibilityExplanation() -> Bool {
         guard !AXIsProcessTrusted() else { return true }
 
@@ -1109,8 +1077,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 !controller.isDisabled($0) &&
                 controller.cachedValue(for: $0) == $0.onValue?.value
             } ?? false
-            // Volume is disabled while muted in wizard-built profiles; allow that
-            // one case so a volume key can unmute and adjust in one press.
+            // Allow one press to unmute and adjust.
             guard !controller.isDisabled(control) || muted else { return }
             if muted, let mute, let off = mute.offValue?.value {
                 controller.set(mute, to: off)

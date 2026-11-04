@@ -1,12 +1,3 @@
-//
-//  MediaKeyRouter.swift
-//  Didact
-//
-//  Decides whether a media key belongs to a supported monitor and which display
-//  it should move. The event tap calls route() on its own thread, so the snapshot
-//  is immutable value types behind a lock and contains no AppKit objects. The
-//  actual DDC work is dispatched to the main actor by the caller.
-//
 
 import AppKit
 import CoreGraphics
@@ -17,7 +8,6 @@ struct MediaKeyRoleState {
     let isVisible: Bool
     let isEnabled: Bool
     let hasValue: Bool
-    /// Only meaningful for a toggle (the mute control).
     let isOn: Bool
 }
 
@@ -39,7 +29,7 @@ struct MediaKeyAudioState {
 struct MediaKeyAction {
     let displayID: CGDirectDisplayID
     let role: Control.Role
-    let direction: Int // +1 up, -1 down, 0 for mute
+    let direction: Int
 }
 
 final class MediaKeyRouter {
@@ -50,7 +40,6 @@ final class MediaKeyRouter {
     private var permissionGranted = false
     private var suspended = false
 
-    /// Called on the main actor after a key has been accepted.
     var onAction: ((MediaKeyAction) -> Void)?
 
     func update(displays: [MediaKeyDisplayState],
@@ -67,15 +56,12 @@ final class MediaKeyRouter {
         lock.unlock()
     }
 
-    /// Returns true when the tap should swallow the event. The action is
-    /// dispatched to the main actor; the tap never touches DDC itself.
     func handle(_ event: MediaKeyEvent, pointer: CGPoint?) -> Bool {
         guard let action = route(event, pointer: pointer) else { return false }
         DispatchQueue.main.async { [weak self] in self?.onAction?(action) }
         return true
     }
 
-    /// Pure routing decision, used directly by tests.
     func route(_ event: MediaKeyEvent, pointer: CGPoint?) -> MediaKeyAction? {
         lock.lock()
         defer { lock.unlock() }
@@ -108,12 +94,7 @@ final class MediaKeyRouter {
         }
     }
 
-    // MARK: - Target selection
-
     private func volumeTarget(pointer: CGPoint?) -> CGDirectDisplayID? {
-        // When the default output is a known display, never fall back to a
-        // different one — adjusting the pointer's monitor would change the wrong
-        // speakers. If its value isn't known yet, let the key through instead.
         if let matched = audio.matchedDisplayID {
             guard let display = displays.first(where: { $0.displayID == matched }),
                   Self.validVolume(display.volume, mute: display.mute) else { return nil }
@@ -142,9 +123,6 @@ final class MediaKeyRouter {
         return requireEnabled ? role.isEnabled : true
     }
 
-    /// Volume is deliberately allowed while it is disabled *because the mute
-    /// toggle is on*: a volume key should unmute and adjust in one press. Any
-    /// other disabled condition still passes through.
     private static func validVolume(_ volume: MediaKeyRoleState?,
                                     mute: MediaKeyRoleState?) -> Bool {
         guard let volume, volume.isVisible, volume.hasValue else { return false }
@@ -152,8 +130,6 @@ final class MediaKeyRouter {
         guard let mute, mute.isVisible, mute.isEnabled, mute.hasValue else { return false }
         return mute.isOn
     }
-
-    // MARK: - Pure helpers
 
     static func display(at point: CGPoint, in displays: [MediaKeyDisplayState]) -> MediaKeyDisplayState? {
         displays.first { $0.bounds.contains(point) }
@@ -171,8 +147,6 @@ final class MediaKeyRouter {
         }?.displayID
     }
 
-    /// Lowercase and strip punctuation/spaces so "BenQ EW270Q (USB-C)" matches
-    /// "BenQ EW270Q". Digits are kept because model numbers distinguish displays.
     static func normalizedName(_ value: String) -> String {
         value.lowercased().filter { $0.isLetter || $0.isNumber }
     }

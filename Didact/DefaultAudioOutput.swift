@@ -1,13 +1,3 @@
-//
-//  DefaultAudioOutput.swift
-//  Didact
-//
-//  The volume keys belong to the current CoreAudio output, not the display under
-//  the pointer. This reads the default output's name and whether macOS can set a
-//  virtual main volume; if it can, the keys stay native and Didact passes them
-//  through. A listener keeps the media-key snapshot current when the output
-//  changes.
-//
 
 import AudioToolbox
 import CoreAudio
@@ -52,8 +42,6 @@ enum DefaultAudioOutput {
     }
 
     private static func hasSettableVolume(_ deviceID: AudioDeviceID) -> Bool {
-        // Prefer the virtual main volume the Sound menu uses, then fall back to
-        // the master/channel scalar controls some drivers expose instead.
         if isSettable(deviceID, selector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume) {
             return true
         }
