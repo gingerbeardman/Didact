@@ -691,8 +691,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// First-run setup opens the wizard once, even for a recognized monitor, so
     /// the media-key offer is not hidden from people who don't need to teach one.
     private func maybeShowFirstRunWizard() {
+        // `displays` only contains monitors with a matching config, so don't use
+        // it as the gate here: an unrecognized monitor is exactly the case that
+        // needs the wizard. teachableServiceExists() covers both.
         guard !UserDefaults.standard.bool(forKey: DefaultsKey.setupWizardSeen),
-              !displays.isEmpty, teachWindow == nil, !isMenuOpen,
+              teachWindow == nil, !isMenuOpen,
               teachableServiceExists() else { return }
         openTeach(showMediaKeys: true)
     }
@@ -999,6 +1002,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func grantAccessibility() {
+        guard confirmAccessibilityExplanation() else { return }
         requestAccessibility()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)

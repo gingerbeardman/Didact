@@ -1224,7 +1224,9 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
                 lines.append("✓ \(control.label ?? "Control") — \(code) (\(control.kind.rawValue))")
             }
             summaryTextView?.string = lines.joined(separator: "\n")
-            setBackAvailable(false)
+            // A first-run ready summary can go back and change the media-key
+            // choices; a regular recognized summary stays a one-way review.
+            setBackAvailable(ready && showMediaKeysStep && !saved)
             // Offer a manual path for variants / testing.
             retryButton?.isHidden = saved
             retryButton?.title = "Teach Manually"
@@ -1519,6 +1521,11 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         let pending = pendingSteps
         if onMediaKeys {                          // media keys → welcome
             showIntro()
+            return
+        }
+        if index >= templates.count, useRecognized, readyProfile != nil,
+           showMediaKeysStep, !saved {
+            showMediaKeys()                       // ready summary → media keys
             return
         }
         if onDiscovery {                          // discovery list → back to last step
