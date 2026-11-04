@@ -17,6 +17,8 @@ struct MediaKeyRoleState {
     let isVisible: Bool
     let isEnabled: Bool
     let hasValue: Bool
+    /// Only meaningful for a toggle (the mute control).
+    let isOn: Bool
 }
 
 struct MediaKeyDisplayState {
@@ -113,12 +115,12 @@ final class MediaKeyRouter {
         // speakers. If its value isn't known yet, let the key through instead.
         if let matched = audio.matchedDisplayID {
             guard let display = displays.first(where: { $0.displayID == matched }),
-                  Self.valid(display.volume, requireEnabled: false) else { return nil }
+                  Self.validVolume(display.volume, mute: display.mute) else { return nil }
             return display.displayID
         }
         guard let point = pointer,
               let display = Self.display(at: point, in: displays),
-              Self.valid(display.volume, requireEnabled: false) else { return nil }
+              Self.validVolume(display.volume, mute: display.mute) else { return nil }
         return display.displayID
     }
 
@@ -137,6 +139,17 @@ final class MediaKeyRouter {
     private static func valid(_ role: MediaKeyRoleState?, requireEnabled: Bool) -> Bool {
         guard let role, role.isVisible, role.hasValue else { return false }
         return requireEnabled ? role.isEnabled : true
+    }
+
+    /// Volume is deliberately allowed while it is disabled *because the mute
+    /// toggle is on*: a volume key should unmute and adjust in one press. Any
+    /// other disabled condition still passes through.
+    private static func validVolume(_ volume: MediaKeyRoleState?,
+                                    mute: MediaKeyRoleState?) -> Bool {
+        guard let volume, volume.isVisible, volume.hasValue else { return false }
+        if volume.isEnabled { return true }
+        guard let mute, mute.isVisible, mute.isEnabled, mute.hasValue else { return false }
+        return mute.isOn
     }
 
     // MARK: - Pure helpers

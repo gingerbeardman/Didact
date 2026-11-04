@@ -556,10 +556,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             grant.target = self
             submenu.addItem(grant)
         } else if mediaKeysEnabled, mediaKeyTapFailed {
-            let restart = NSMenuItem(title: "Restart Didact to Enable Media Keys",
-                                     action: nil, keyEquivalent: "")
-            restart.isEnabled = false
-            submenu.addItem(restart)
+            let retry = NSMenuItem(title: "Retry Media Keys",
+                                   action: #selector(retryMediaKeys), keyEquivalent: "")
+            retry.target = self
+            submenu.addItem(retry)
             let input = NSMenuItem(title: "Check Input Monitoring Permission…",
                                    action: #selector(openInputMonitoring), keyEquivalent: "")
             input.target = self
@@ -827,6 +827,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleMediaKeys() {
         mediaKeysEnabled.toggle()
         if mediaKeysEnabled {
+            // Don't ask for system access before there's a monitor to control.
+            guard !displays.isEmpty else {
+                refreshMediaKeySnapshot()
+                rebuildMenu()
+                return
+            }
             requestAccessibility()
             if AXIsProcessTrusted() {
                 startMediaKeyTap()
@@ -838,6 +844,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             axPollTimer = nil
             stopMediaKeyTap()
             mediaKeyOSD.hideImmediately()
+        }
+        refreshMediaKeySnapshot()
+        rebuildMenu()
+    }
+
+    @objc private func retryMediaKeys() {
+        stopMediaKeyTap()
+        if AXIsProcessTrusted() {
+            startMediaKeyTap()
+        } else {
+            startAXPolling()
         }
         refreshMediaKeySnapshot()
         rebuildMenu()
@@ -912,16 +929,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let control = controller.config.control(forRole: role) else { return nil }
         return MediaKeyRoleState(
             control: control,
-            isVisible: !controller.isHidden(control),
+            isVisible: control.hidden != true && !controller.isHidden(control),
             isEnabled: !controller.isDisabled(control),
-            hasValue: controller.cachedValue(for: control) != nil)
+            hasValue: controller.cachedValue(for: control) != nil,
+            isOn: control.kind == .toggle ? controller.isOn(control) : false)
     }
 
     private func performMediaKey(_ action: MediaKeyAction) {
         guard mediaKeysEnabled, !mediaKeysSuspended,
               let controller = displays.first(where: { $0.displayID == action.displayID }),
               let control = controller.config.control(forRole: action.role),
-              !controller.isHidden(control) else { return }
+              control.hidden != true, !controller.isHidden(control) else { return }
 
         lastMediaKeyAdjustment = Date()
 
@@ -937,8 +955,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         case .volume:
             guard let current = controller.cachedValue(for: control) else { return }
-            if let mute = controller.config.control(forRole: .mute),
-               controller.isOn(mute), let off = mute.offValue?.value {
+            let mute = controller.config.control(forRole: .mute)
+            let muted = mute.map {
+                !controller.isDisabled($0) &&
+                controller.cachedValue(for: $0) == $0.onValue?.value
+            } ?? false
+            // Volume is disabled while muted in wizard-built profiles; allow that
+            // one case so a volume key can unmute and adjust in one press.
+            guard !controller.isDisabled(control) || muted else { return }
+            if muted, let mute, let off = mute.offValue?.value {
                 controller.set(mute, to: off)
             }
             let next = clamp(current + action.direction * control.keyStep, to: control)

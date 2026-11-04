@@ -21,6 +21,9 @@ final class MediaKeyTap {
     private var runLoop: CFRunLoop?
     private var thread: Thread?
     private var swallowed: Set<Int> = []
+    /// `swallowed` and `port` are touched by the tap thread and by start/stop on
+    /// the main thread, so both are guarded.
+    private let stateLock = NSLock()
 
     init(handler: @escaping (MediaKeyEvent) -> Bool,
          onDisabled: @escaping () -> Void) {
@@ -35,7 +38,9 @@ final class MediaKeyTap {
     @discardableResult
     func start() -> Bool {
         stop()
+        stateLock.lock()
         swallowed.removeAll()
+        stateLock.unlock()
 
         let mask = CGEventMask(1 << 14) // NX_SYSDEFINED
         guard let port = CGEvent.tapCreate(
@@ -52,7 +57,9 @@ final class MediaKeyTap {
             return false
         }
 
+        stateLock.lock()
         self.port = port
+        stateLock.unlock()
         self.source = source
 
         let thread = Thread { [weak self] in
@@ -64,20 +71,23 @@ final class MediaKeyTap {
             CFRunLoopRun()
         }
         thread.name = "Didact media keys"
-        thread.stackSize = 64 * 1024
         self.thread = thread
         thread.start()
         return true
     }
 
     func stop() {
+        stateLock.lock()
+        let port = self.port
+        self.port = nil
+        stateLock.unlock()
+
         if let port {
             CGEvent.tapEnable(tap: port, enable: false)
             CFMachPortInvalidate(port)
         }
         if let runLoop { CFRunLoopStop(runLoop) }
         if let source { CFRunLoopSourceInvalidate(source) }
-        port = nil
         source = nil
         runLoop = nil
         thread = nil
@@ -85,6 +95,9 @@ final class MediaKeyTap {
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout {
+            stateLock.lock()
+            let port = self.port
+            stateLock.unlock()
             if let port { CGEvent.tapEnable(tap: port, enable: true) }
             return Unmanaged.passUnretained(event)
         }
@@ -103,19 +116,29 @@ final class MediaKeyTap {
         if parsed.isUp {
             // Swallow the release only for a press we took, so a key we passed
             // through stays consistent.
-            return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event)
+            stateLock.lock()
+            let wasSwallowed = swallowed.remove(code) != nil
+            stateLock.unlock()
+            return wasSwallowed ? nil : Unmanaged.passUnretained(event)
         }
+
+        stateLock.lock()
+        let alreadySwallowed = swallowed.contains(code)
+        stateLock.unlock()
 
         // A hold only belongs to Didact if its initial press was taken. Don't
         // start mid-hold just because the target became available on a repeat.
-        if parsed.isRepeat, !swallowed.contains(code) {
+        if parsed.isRepeat, !alreadySwallowed {
             return Unmanaged.passUnretained(event)
         }
 
-        let alreadySwallowed = swallowed.contains(code)
         let handled = handler(parsed)
         if handled || alreadySwallowed {
-            if handled { swallowed.insert(code) }
+            if handled {
+                stateLock.lock()
+                swallowed.insert(code)
+                stateLock.unlock()
+            }
             return nil
         }
         return Unmanaged.passUnretained(event)

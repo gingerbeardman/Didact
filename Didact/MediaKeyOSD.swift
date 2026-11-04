@@ -15,6 +15,8 @@ final class MediaKeyOSD {
     private let iconView = NSImageView()
     private let bar = SegmentBarView()
     private var hideTimer: Timer?
+    private var fadeTimer: Timer?
+    private var fadeStep = 0
 
     init() {
         let size = NSSize(width: 180, height: 56)
@@ -77,6 +79,9 @@ final class MediaKeyOSD {
         panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - panel.frame.width / 2,
                                      y: screen.visibleFrame.minY + 80))
         hideTimer?.invalidate()
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        fadeStep = 0
         panel.alphaValue = 1
         panel.orderFrontRegardless()
         hideTimer = Timer.scheduledTimer(timeInterval: 1.1, target: self,
@@ -88,24 +93,29 @@ final class MediaKeyOSD {
         hideTimer?.invalidate()
         hideTimer = nil
         guard panel.isVisible else { return }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            panel.animator().alphaValue = 0
-        }
-        hideTimer = Timer.scheduledTimer(timeInterval: 0.22, target: self,
-                                         selector: #selector(finishHide),
-                                         userInfo: nil, repeats: false)
+        fadeStep = 0
+        fadeTimer = Timer.scheduledTimer(timeInterval: 0.02, target: self,
+                                         selector: #selector(fadeTick),
+                                         userInfo: nil, repeats: true)
     }
 
-    @objc private func finishHide() {
-        hideTimer?.invalidate()
-        hideTimer = nil
-        panel.orderOut(nil)
+    @objc private func fadeTick() {
+        fadeStep += 1
+        panel.alphaValue = Swift.max(0, 1 - CGFloat(fadeStep) / 10)
+        if fadeStep >= 10 {
+            fadeTimer?.invalidate()
+            fadeTimer = nil
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+        }
     }
 
     func hideImmediately() {
         hideTimer?.invalidate()
         hideTimer = nil
+        fadeTimer?.invalidate()
+        fadeTimer = nil
+        fadeStep = 0
         panel.orderOut(nil)
         panel.alphaValue = 1
     }

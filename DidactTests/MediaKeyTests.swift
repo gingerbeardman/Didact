@@ -94,9 +94,10 @@ struct MediaKeyTests {
     private func roleState(_ control: Control,
                            visible: Bool = true,
                            enabled: Bool = true,
-                           hasValue: Bool = true) -> MediaKeyRoleState {
+                           hasValue: Bool = true,
+                           isOn: Bool = false) -> MediaKeyRoleState {
         MediaKeyRoleState(control: control, isVisible: visible,
-                          isEnabled: enabled, hasValue: hasValue)
+                          isEnabled: enabled, hasValue: hasValue, isOn: isOn)
     }
 
     private func display(id: CGDirectDisplayID = 1,
@@ -133,6 +134,10 @@ struct MediaKeyTests {
         MediaKeyEvent(key: key, isDown: true, isRepeat: false, isUp: false, modifiers: modifiers)
     }
 
+    private func upEvent(_ key: MediaKey) -> MediaKeyEvent {
+        MediaKeyEvent(key: key, isDown: false, isRepeat: false, isUp: true, modifiers: [])
+    }
+
     @Test func brightnessRoutesToThePointerDisplay() {
         let router = makeRouter(displays: [display()])
         let action = router.route(event(.brightnessUp), pointer: CGPoint(x: 50, y: 50))
@@ -153,6 +158,44 @@ struct MediaKeyTests {
         let router = makeRouter(displays: [display()])
         #expect(router.route(event(.brightnessUp, modifiers: .command), pointer: CGPoint(x: 50, y: 50)) == nil)
         #expect(router.route(event(.brightnessUp, modifiers: .option), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func functionAndCapsLockDoNotBlock() {
+        let router = makeRouter(displays: [display()])
+        #expect(router.route(event(.brightnessUp, modifiers: .function), pointer: CGPoint(x: 50, y: 50)) != nil)
+        #expect(router.route(event(.brightnessUp, modifiers: .capsLock), pointer: CGPoint(x: 50, y: 50)) != nil)
+    }
+
+    @Test func keyUpIsNeverRouted() {
+        let router = makeRouter(displays: [display()])
+        #expect(router.route(upEvent(.brightnessUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func hiddenAndDisabledRolesPassThrough() {
+        let hidden = makeRouter(displays: [
+            display(brightness: roleState(range(0x10), visible: false)),
+        ])
+        #expect(hidden.route(event(.brightnessUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+
+        let disabled = makeRouter(displays: [
+            display(brightness: roleState(range(0x10), enabled: false)),
+        ])
+        #expect(disabled.route(event(.brightnessUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+
+        let hiddenVolume = makeRouter(displays: [
+            display(volume: roleState(range(0x62), visible: false)),
+        ])
+        #expect(hiddenVolume.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+
+        let hiddenMute = makeRouter(displays: [
+            display(mute: roleState(toggle(0x8D), visible: false)),
+        ])
+        #expect(hiddenMute.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) == nil)
+
+        let disabledMute = makeRouter(displays: [
+            display(mute: roleState(toggle(0x8D), enabled: false)),
+        ])
+        #expect(disabledMute.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) == nil)
     }
 
     @Test func volumeUsesAudioMatchedDisplayBeforeThePointer() {
@@ -187,6 +230,30 @@ struct MediaKeyTests {
         ]
         let router = makeRouter(displays: displays, audio: audio(matched: 2))
         #expect(router.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func volumeIsAllowedWhileDisabledOnlyBecauseMuteIsOn() {
+        let muted = makeRouter(displays: [
+            display(volume: roleState(range(0x62, min: 0, max: 50), enabled: false),
+                    mute: roleState(toggle(0x8D), isOn: true)),
+        ])
+        #expect(muted.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) != nil)
+
+        let disabled = makeRouter(displays: [
+            display(volume: roleState(range(0x62, min: 0, max: 50), enabled: false),
+                    mute: roleState(toggle(0x8D), isOn: false)),
+        ])
+        #expect(disabled.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func muteDoesNotFallBackWhenTheMatchedDisplayIsUnready() {
+        let displays = [
+            display(id: 1),
+            display(id: 2, name: "BenQ EW270Q",
+                    mute: roleState(toggle(0x8D), hasValue: false)),
+        ]
+        let router = makeRouter(displays: displays, audio: audio(matched: 2))
+        #expect(router.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) == nil)
     }
 
     @Test func muteRoutesWhenAMuteControlExists() {
@@ -229,5 +296,13 @@ struct MediaKeyTests {
         #expect(coalescer.submit(key: "volume", value: 6) == nil)
         coalescer.cancel(key: "volume")
         #expect(coalescer.complete(key: "volume") == nil)
+    }
+
+    @Test func coalescerRearmsAfterACompletedWrite() {
+        let coalescer = KeyWriteCoalescer()
+        #expect(coalescer.submit(key: "brightness", value: 10) == 10)
+        #expect(coalescer.complete(key: "brightness") == nil)
+        #expect(coalescer.submit(key: "brightness", value: 16) == 16)
+        #expect(coalescer.complete(key: "brightness") == nil)
     }
 }
