@@ -25,6 +25,9 @@ controls you actually use.
 - Apple Silicon Mac (DDC is done via `IOAVService`, Apple-Silicon only).
 - A monitor connected over DisplayPort / USB-C / HDMI with DDC/CI enabled.
 - macOS 13.0 or later.
+- Optional: Accessibility permission for media-key control. The app works
+  without it; the keys control the monitor only after you enable the feature in
+  **Didact ▸ Use Media Keys for Brightness & Volume**.
 
 ## How it works
 
@@ -37,6 +40,29 @@ controls you actually use.
   access, which the App Sandbox forbids.
 - The DDC/VCP map was ported from [bebenqli](https://github.com/iurev/bebenqli),
   a Linux TUI for the same panel.
+
+## Media keys
+
+The **Use Media Keys for Brightness & Volume** item in the Didact menu is
+optional and off by default. When enabled, Didact asks for Accessibility access
+and maps the Mac's brightness, volume and mute keys to DDC controls:
+
+- **Brightness** follows the display under the pointer.
+- **Volume and mute** follow the display matching the default audio output. If
+  the system already has a working volume control for that output, the keys are
+  left alone. If the audio device name doesn't match a display, the pointer
+  display is used.
+- Everything else passes through: modifiers, unsupported or hidden controls, the
+  built-in display, and a monitor that hasn't been read yet.
+
+A small 16-segment OSD shows handled changes. Didact does not use Apple's private
+OSD API, and it keeps a single serial DDC writer with a latest-value coalescer so
+holding a key doesn't flood the monitor.
+
+**Touch Bar:** the Touch Bar's own brightness and volume controls belong to
+macOS and cannot be redirected to a third-party DDC monitor. Didact does not add
+a private Touch Bar/Control Strip item; use the menu bar or a custom shortcut
+instead.
 
 ## Adding support for another monitor
 
