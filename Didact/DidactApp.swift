@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import ApplicationServices
 import ServiceManagement
 import SwiftUI
 
@@ -34,6 +35,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isMenuOpen = false
     private var refreshInFlight = false
     private var refreshTimer: Timer?
+
+    // Media keys (brightness/volume/mute)
+    private let mediaKeysKey = "mediaKeysEnabled"
+    private var mediaKeyTap: MediaKeyTap?
+    private var mediaKeyRouter: MediaKeyRouter?
+    private let mediaKeyOSD = MediaKeyOSD()
+    private let audioMonitor = DefaultAudioOutputMonitor()
+    private var mediaKeysSuspended = false
+    private var mediaKeyTapFailed = false
+    private var axPollTimer: Timer?
+    private var axPollDeadline = Date.distantPast
+    private var lastMediaKeyAdjustment = Date.distantPast
+
+    private var mediaKeysEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: mediaKeysKey) }
+        set { UserDefaults.standard.set(newValue, forKey: mediaKeysKey) }
+    }
     /// Visibility snapshot (hidden control stateKeys) frozen while the menu is open,
     /// so a post-open value refresh can't change the row set and jump the height.
     private var frozenHidden: Set<String>?
@@ -51,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupStatusItem()
         rescanDisplays()
         startBackgroundRefresh()
+        setupMediaKeys()
 
         // Re-scan automatically when displays are plugged in / out or rearranged.
         NotificationCenter.default.addObserver(
@@ -67,6 +86,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let autoTeach = (active == nil)
         #endif
         if autoTeach, teachableServiceExists() { openTeach() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        axPollTimer?.invalidate()
+        stopMediaKeyTap()
+        audioMonitor.stop()
+        mediaKeyOSD.hideImmediately()
     }
 
     @objc private func screensChanged() {
@@ -132,6 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func backgroundRefreshTick() {
+        // A refresh queued in the middle of a held key would delay the key writes
+        // and then read back over them. Let the keys settle first.
+        guard Date().timeIntervalSince(lastMediaKeyAdjustment) > 1.5,
+              displays.allSatisfy({ !$0.isAdjusting }) else { return }
         refreshActive(rebuildWhenDone: false)
     }
 
@@ -205,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshInFlight = false
         refreshActive(rebuildWhenDone: true)
         rebuildMenu()
+        refreshMediaKeySnapshot()
     }
 
     private func refreshActive(rebuildWhenDone: Bool, rebuildOpenMenuWhenDone: Bool = false) {
@@ -214,6 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         active.refreshAll { [weak self] in
             guard let self else { return }
             self.refreshInFlight = false
+            self.refreshMediaKeySnapshot()
             if rebuildWhenDone, (!self.isMenuOpen || rebuildOpenMenuWhenDone || wasCold) {
                 if self.isMenuOpen, wasCold {
                     self.frozenHidden = Set(active.config.controls.filter { active.isHidden($0) }.map(\.stateKey))
@@ -242,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === statusMenu, !isOpeningMenu {
+            ensureMediaKeysStarted()
             rebuildMenu()
         }
     }
@@ -505,6 +538,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         submenu.addItem(.separator())
 
+        let mediaKeys = NSMenuItem(title: "Use Media Keys for Brightness & Volume",
+                                   action: #selector(toggleMediaKeys), keyEquivalent: "")
+        mediaKeys.target = self
+        mediaKeys.state = mediaKeysEnabled ? .on : .off
+        submenu.addItem(mediaKeys)
+
+        if mediaKeysEnabled, !AXIsProcessTrusted() {
+            let grant = NSMenuItem(title: "Grant Accessibility Permission…",
+                                   action: #selector(grantAccessibility), keyEquivalent: "")
+            grant.target = self
+            submenu.addItem(grant)
+        } else if mediaKeysEnabled, mediaKeyTapFailed {
+            let restart = NSMenuItem(title: "Restart Didact to Enable Media Keys",
+                                     action: nil, keyEquivalent: "")
+            restart.isEnabled = false
+            submenu.addItem(restart)
+        }
+
+        submenu.addItem(.separator())
+
         add("About Didact…", #selector(showAbout))
         add("Quit Didact", #selector(quit), key: "q")
 
@@ -703,6 +756,218 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let symbol = sender.representedObject as? String else { return }
         iconName = symbol   // setter updates the status icon
         rebuildMenu()
+    }
+
+    // MARK: - Media keys
+
+    private func setupMediaKeys() {
+        audioMonitor.start { [weak self] in self?.refreshMediaKeySnapshot() }
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(self, selector: #selector(systemWillSleep),
+                           name: NSWorkspace.willSleepNotification, object: nil)
+        center.addObserver(self, selector: #selector(systemDidWake),
+                           name: NSWorkspace.didWakeNotification, object: nil)
+        if mediaKeysEnabled, AXIsProcessTrusted() {
+            startMediaKeyTap()
+        }
+    }
+
+    private func ensureMediaKeysStarted() {
+        guard mediaKeysEnabled, mediaKeyTap == nil, AXIsProcessTrusted() else { return }
+        startMediaKeyTap()
+    }
+
+    private func startMediaKeyTap() {
+        guard mediaKeysEnabled, mediaKeyTap == nil, AXIsProcessTrusted() else { return }
+        let router = mediaKeyRouter ?? MediaKeyRouter()
+        router.onAction = { [weak self] action in self?.performMediaKey(action) }
+        mediaKeyRouter = router
+        refreshMediaKeySnapshot()
+
+        let tap = MediaKeyTap(
+            handler: { [weak router] event in
+                guard let router else { return false }
+                return router.handle(event, pointer: CGEvent(source: nil)?.location)
+            },
+            onDisabled: { [weak self] in
+                DispatchQueue.main.async { self?.mediaKeyTapWasDisabled() }
+            })
+        if tap.start() {
+            mediaKeyTap = tap
+            mediaKeyTapFailed = false
+        } else {
+            mediaKeyTapFailed = true
+            NSLog("Didact: media key tap could not be created")
+        }
+    }
+
+    private func stopMediaKeyTap() {
+        mediaKeyTap?.stop()
+        mediaKeyTap = nil
+        mediaKeyTapFailed = false
+    }
+
+    private func mediaKeyTapWasDisabled() {
+        stopMediaKeyTap()
+        mediaKeyTapFailed = true
+        refreshMediaKeySnapshot()
+        rebuildMenu()
+    }
+
+    @objc private func toggleMediaKeys() {
+        mediaKeysEnabled.toggle()
+        if mediaKeysEnabled {
+            requestAccessibility()
+            if AXIsProcessTrusted() {
+                startMediaKeyTap()
+            } else {
+                startAXPolling()
+            }
+        } else {
+            axPollTimer?.invalidate()
+            axPollTimer = nil
+            stopMediaKeyTap()
+            mediaKeyOSD.hideImmediately()
+        }
+        refreshMediaKeySnapshot()
+        rebuildMenu()
+    }
+
+    @objc private func grantAccessibility() {
+        requestAccessibility()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        startAXPolling()
+    }
+
+    private func requestAccessibility() {
+        NSApp.activate(ignoringOtherApps: true)
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
+    private func startAXPolling() {
+        axPollTimer?.invalidate()
+        axPollDeadline = Date().addingTimeInterval(120)
+        axPollTimer = Timer.scheduledTimer(timeInterval: 1, target: self,
+                                           selector: #selector(axPollTick),
+                                           userInfo: nil, repeats: true)
+    }
+
+    @objc private func axPollTick() {
+        if AXIsProcessTrusted() {
+            axPollTimer?.invalidate()
+            axPollTimer = nil
+            startMediaKeyTap()
+            refreshMediaKeySnapshot()
+            rebuildMenu()
+        } else if Date() > axPollDeadline {
+            axPollTimer?.invalidate()
+            axPollTimer = nil
+        }
+    }
+
+    private func refreshMediaKeySnapshot() {
+        guard let router = mediaKeyRouter else { return }
+        let states = displays.map { controller in
+            MediaKeyDisplayState(
+                displayID: controller.displayID,
+                bounds: CGDisplayBounds(controller.displayID),
+                productName: controller.productName,
+                brightness: roleState(controller, .brightness),
+                volume: roleState(controller, .volume),
+                mute: roleState(controller, .mute))
+        }
+        let audio = DefaultAudioOutput.current()
+        let matched = MediaKeyRouter.matchDisplayID(for: audio.name, in: states)
+        router.update(
+            displays: states,
+            audio: MediaKeyAudioState(name: audio.name,
+                                      hasNativeVolume: audio.hasNativeVolume,
+                                      matchedDisplayID: matched),
+            enabled: mediaKeysEnabled,
+            permissionGranted: AXIsProcessTrusted(),
+            suspended: mediaKeysSuspended)
+    }
+
+    private func roleState(_ controller: DisplayController,
+                           _ role: Control.Role) -> MediaKeyRoleState? {
+        guard let control = controller.config.control(forRole: role) else { return nil }
+        return MediaKeyRoleState(
+            control: control,
+            isVisible: !controller.isHidden(control),
+            isEnabled: !controller.isDisabled(control),
+            hasValue: controller.cachedValue(for: control) != nil)
+    }
+
+    private func performMediaKey(_ action: MediaKeyAction) {
+        guard let controller = displays.first(where: { $0.displayID == action.displayID }),
+              let control = controller.config.control(forRole: action.role),
+              !controller.isHidden(control) else { return }
+
+        lastMediaKeyAdjustment = Date()
+
+        switch action.role {
+        case .brightness:
+            guard !controller.isDisabled(control),
+                  let current = controller.cachedValue(for: control) else { return }
+            let next = clamp(current + action.direction * control.keyStep, to: control)
+            if next != current { controller.setKey(control, to: next) }
+            showMediaKeyOSD(.brightness, value: next,
+                            min: control.min ?? 0, max: control.max ?? 100,
+                            displayID: action.displayID, muted: false)
+
+        case .volume:
+            guard let current = controller.cachedValue(for: control) else { return }
+            if let mute = controller.config.control(forRole: .mute),
+               controller.isOn(mute), let off = mute.offValue?.value {
+                controller.set(mute, to: off)
+            }
+            let next = clamp(current + action.direction * control.keyStep, to: control)
+            if next != current { controller.setKey(control, to: next) }
+            showMediaKeyOSD(.volume, value: next,
+                            min: control.min ?? 0, max: control.max ?? 100,
+                            displayID: action.displayID, muted: false)
+
+        case .mute:
+            guard !controller.isDisabled(control),
+                  let on = control.onValue?.value,
+                  let off = control.offValue?.value else { return }
+            let wasMuted = controller.isOn(control)
+            controller.set(control, to: wasMuted ? off : on)
+            showMediaKeyOSD(.mute, value: wasMuted ? 1 : 0,
+                            min: 0, max: 1,
+                            displayID: action.displayID, muted: !wasMuted)
+        }
+    }
+
+    private func clamp(_ value: Int, to control: Control) -> Int {
+        let lo = control.min ?? 0
+        let hi = control.max ?? value
+        return Swift.min(Swift.max(value, lo), hi)
+    }
+
+    private func showMediaKeyOSD(_ role: Control.Role, value: Int, min: Int, max: Int,
+                                 displayID: CGDirectDisplayID, muted: Bool) {
+        let screen = NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        } ?? NSScreen.main
+        guard let screen else { return }
+        mediaKeyOSD.show(role: role, value: value, min: min, max: max,
+                         muted: muted, on: screen)
+    }
+
+    @objc private func systemWillSleep() {
+        mediaKeysSuspended = true
+        mediaKeyOSD.hideImmediately()
+        refreshMediaKeySnapshot()
+    }
+
+    @objc private func systemDidWake() {
+        mediaKeysSuspended = false
+        rescanDisplays()
+        refreshMediaKeySnapshot()
     }
 
     @objc private func toggleLaunchAtLogin() {
