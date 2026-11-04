@@ -48,6 +48,27 @@ settings window, no bloated vendor control panel, just standard macOS menus.
   press buttons on the monitor's own OSD and watch which code moves.
 - Searchable, selectable log with Copy All / Clear. Runs only while open.
 
+## Media keys
+
+- Optional: the Mac's brightness, volume and mute keys control the external
+  monitor instead of doing nothing.
+- Offered once in the first-run setup wizard. **Brightness Keys** and **Volume &
+  Mute Keys** both start enabled; the master switch is off until you enable it.
+- **Brightness** follows the display under the mouse pointer.
+- **Volume and mute** follow the default audio output's display, so the keys
+  change the speakers you're actually hearing; if the name doesn't match a
+  display, they fall back to the pointer display.
+- Keys pass through untouched when the pointer is over the built-in display, the
+  Mac audio device has its own volume control, no supported control exists, a key
+  group is switched off, or a modifier key is held.
+- A small 16-segment on-screen display confirms handled changes.
+- Requires Accessibility permission, requested only after the wizard or menu
+  explains what it is used for. No special entitlement, login helper or driver.
+- **Touch Bar:** detected on Touch Bar MacBooks. Use the Touch Bar's volume –,
+  mute and + buttons, not the sliders. The audio controls may look disabled when
+  the external output has no system volume, but the buttons still work. The
+  brightness slider is not handled; use the menu bar.
+
 ## Menu editor
 
 - Reorder the top-level controls, remove ones you don't want, and insert
@@ -67,4 +88,7 @@ settings window, no bloated vendor control panel, just standard macOS menus.
   CoreDisplay/IOKit symbols declared via `@_silgen_name`.
 - **Not sandboxed** (DDC needs raw IOKit access), **hardened runtime** enabled,
   Apple-notarized for Gatekeeper.
+- **Accessibility permission** is optional and used only to read the five media
+  keys; the event tap is limited to system-defined media-key events, not ordinary
+  keystrokes.
 - Auto re-scans displays when monitors are plugged in/out or rearranged.

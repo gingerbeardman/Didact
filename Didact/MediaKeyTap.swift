@@ -1,0 +1,134 @@
+
+import AppKit
+import CoreGraphics
+
+final class MediaKeyTap {
+    private let handler: (MediaKeyEvent) -> Bool
+    private let onDisabled: () -> Void
+
+    private var port: CFMachPort?
+    private var source: CFRunLoopSource?
+    private var runLoop: CFRunLoop?
+    private var thread: Thread?
+    private var swallowed: Set<Int> = []
+    private let stateLock = NSLock()
+
+    init(handler: @escaping (MediaKeyEvent) -> Bool,
+         onDisabled: @escaping () -> Void) {
+        self.handler = handler
+        self.onDisabled = onDisabled
+    }
+
+    deinit { stop() }
+
+    @discardableResult
+    func start() -> Bool {
+        stop()
+        stateLock.lock()
+        swallowed.removeAll()
+        stateLock.unlock()
+
+        let mask = CGEventMask(1) << CGEventMask(NSEvent.EventType.systemDefined.rawValue)
+        guard let port = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: mediaKeyTapCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else { return false }
+
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) else {
+            CFMachPortInvalidate(port)
+            return false
+        }
+
+        stateLock.lock()
+        self.port = port
+        stateLock.unlock()
+        self.source = source
+
+        let thread = Thread { [weak self] in
+            guard let self else { return }
+            let runLoop = CFRunLoopGetCurrent()
+            self.runLoop = runLoop
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+            CGEvent.tapEnable(tap: port, enable: true)
+            CFRunLoopRun()
+        }
+        thread.name = "Didact media keys"
+        self.thread = thread
+        thread.start()
+        return true
+    }
+
+    func stop() {
+        stateLock.lock()
+        let port = self.port
+        self.port = nil
+        stateLock.unlock()
+
+        if let port {
+            CGEvent.tapEnable(tap: port, enable: false)
+            CFMachPortInvalidate(port)
+        }
+        if let runLoop { CFRunLoopStop(runLoop) }
+        if let source { CFRunLoopSourceInvalidate(source) }
+        source = nil
+        runLoop = nil
+        thread = nil
+    }
+
+    fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout {
+            stateLock.lock()
+            let port = self.port
+            stateLock.unlock()
+            if let port { CGEvent.tapEnable(tap: port, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        if type == .tapDisabledByUserInput {
+            DispatchQueue.main.async { [weak self] in self?.onDisabled() }
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard let nsEvent = NSEvent(cgEvent: event),
+              let parsed = MediaKeyParser.parse(nsEvent) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let code = parsed.key.rawValue
+
+        if parsed.isUp {
+            stateLock.lock()
+            let wasSwallowed = swallowed.remove(code) != nil
+            stateLock.unlock()
+            return wasSwallowed ? nil : Unmanaged.passUnretained(event)
+        }
+
+        stateLock.lock()
+        let alreadySwallowed = swallowed.contains(code)
+        stateLock.unlock()
+
+        if parsed.isRepeat, !alreadySwallowed {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let handled = handler(parsed)
+        if handled || alreadySwallowed {
+            if handled {
+                stateLock.lock()
+                swallowed.insert(code)
+                stateLock.unlock()
+            }
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
+    }
+}
+
+private let mediaKeyTapCallback: CGEventTapCallBack = { _, type, event, refcon in
+    guard let refcon else { return Unmanaged.passUnretained(event) }
+    let tap = Unmanaged<MediaKeyTap>.fromOpaque(refcon).takeUnretainedValue()
+    return tap.handle(type: type, event: event)
+}

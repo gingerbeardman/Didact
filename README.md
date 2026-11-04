@@ -25,6 +25,9 @@ controls you actually use.
 - Apple Silicon Mac (DDC is done via `IOAVService`, Apple-Silicon only).
 - A monitor connected over DisplayPort / USB-C / HDMI with DDC/CI enabled.
 - macOS 13.0 or later.
+- Optional: Accessibility permission for media-key control. The app works
+  without it; the keys control the monitor only after you enable the feature in
+  the first-run setup wizard or **Didact ▸ Media Keys**.
 
 ## How it works
 
@@ -37,6 +40,37 @@ controls you actually use.
   access, which the App Sandbox forbids.
 - The DDC/VCP map was ported from [bebenqli](https://github.com/iurev/bebenqli),
   a Linux TUI for the same panel.
+
+## Media keys
+
+The first-run setup wizard offers media-key control once for everyone. Both key
+groups start enabled — **Brightness** and **Volume & Mute** — but the master
+switch is off until you turn it on. The wizard explains what Accessibility is
+used for before macOS shows its prompt. You can change all of it later in
+**Didact ▸ Media Keys**.
+
+When enabled, Didact maps the Mac's brightness, volume and mute keys to DDC
+controls:
+
+- **Brightness** follows the display under the pointer.
+- **Volume and mute** follow the display matching the default audio output. If
+  the system already has a working volume control for that output, the keys are
+  left alone. If the audio device name doesn't match a display, the pointer
+  display is used.
+- Everything else passes through: modifiers, unsupported or hidden controls, the
+  built-in display, and a monitor that hasn't been read yet. Turning a key group
+  off leaves those keys to macOS.
+
+A small 16-segment OSD shows handled changes. Didact does not use Apple's private
+OSD API, and it keeps a single serial DDC writer with a latest-value coalescer so
+holding a key doesn't flood the monitor.
+
+**Touch Bar:** Didact detects Touch Bar MacBooks and shows a note in the media-key
+setup. Use the Touch Bar's volume –, mute and + buttons, not the sliders. macOS
+may show the audio controls as disabled when the external output has no system
+volume, but the buttons are still clickable and control the monitor. The
+brightness slider is not handled; use the menu bar for brightness. Didact does
+not add a private Touch Bar/Control Strip item.
 
 ## Adding support for another monitor
 

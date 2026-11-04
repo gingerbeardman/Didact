@@ -22,10 +22,15 @@ final class DisplayController {
     private var cache: [String: Int] = [:]
     private var rawCache: [UInt8: Int] = [:]
     private var throttleWork: [String: DispatchWorkItem] = [:]
+    private var writeGeneration = 0
+    private let keyWrites = KeyWriteCoalescer()
+    private(set) var lastKeyWriteDate = Date.distantPast
 
     /// False until the first hardware read completes; the UI disables sliders
     /// until then so they don't show a default value that snaps to the real one.
     private(set) var hasInitialValues = false
+
+    var isAdjusting: Bool { Date().timeIntervalSince(lastKeyWriteDate) < 1.5 }
 
     init(displayID: CGDirectDisplayID, service: IOAVService, productName: String,
          stableID: String, config: MonitorConfig) {
@@ -49,6 +54,10 @@ final class DisplayController {
         case .toggle: return control.offValue?.value
         default: return nil
         }
+    }
+
+    func cachedValue(for control: Control) -> Int? {
+        cache[control.stateKey]
     }
 
     func isOn(_ control: Control) -> Bool {
@@ -87,6 +96,7 @@ final class DisplayController {
         let readable = config.controls.filter { $0.isReadable }
         let controls = config.controls
         let svc = service
+        let generation = writeGeneration
         queue.async {
             var results: [String: Int] = [:]
             for control in readable {
@@ -105,11 +115,14 @@ final class DisplayController {
                 }
             }
             DispatchQueue.main.async {
-                for (k, v) in results {
-                    if k.hasPrefix("raw/"), let code = UInt8(String(k.dropFirst(4))) {
-                        self.rawCache[code] = v
-                    } else {
-                        self.cache[k] = v
+                // Don't let an older read overwrite a newer key write.
+                if generation == self.writeGeneration {
+                    for (k, v) in results {
+                        if k.hasPrefix("raw/"), let code = UInt8(String(k.dropFirst(4))) {
+                            self.rawCache[code] = v
+                        } else {
+                            self.cache[k] = v
+                        }
                     }
                 }
                 self.hasInitialValues = true
@@ -124,12 +137,15 @@ final class DisplayController {
     /// hardware. Range controls are throttled (sliders fire rapidly); cycles and
     /// toggles write immediately.
     func set(_ control: Control, to value: Int, throttle: Bool = false) {
-        cache[control.stateKey] = value
+        let key = control.stateKey
+        throttleWork[key]?.cancel()
+        throttleWork[key] = nil
+        keyWrites.cancel(key: key)
+        writeGeneration &+= 1
+        cache[key] = value
         persistIfNeeded(control, value: value)
 
         if throttle {
-            let key = control.stateKey
-            throttleWork[key]?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.performWrite(control, value: value) }
             throttleWork[key] = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.07, execute: work)
@@ -138,8 +154,46 @@ final class DisplayController {
         }
     }
 
-    private func performWrite(_ control: Control, value: Int) {
-        guard let code = control.featureCode else { return }
+    func setKey(_ control: Control, to value: Int) {
+        guard control.kind == .range else {
+            set(control, to: value)
+            return
+        }
+        let key = control.stateKey
+        let clamped = clampedValue(value, for: control)
+        cache[key] = clamped
+        persistIfNeeded(control, value: clamped)
+        writeGeneration &+= 1
+        lastKeyWriteDate = Date()
+        throttleWork[key]?.cancel()
+        throttleWork[key] = nil
+
+        if let write = keyWrites.submit(key: key, value: clamped) {
+            performWrite(control, value: write) { [weak self] in
+                self?.finishKeyWrite(key: key, control: control)
+            }
+        }
+    }
+
+    private func finishKeyWrite(key: String, control: Control) {
+        guard let next = keyWrites.complete(key: key) else { return }
+        performWrite(control, value: next) { [weak self] in
+            self?.finishKeyWrite(key: key, control: control)
+        }
+    }
+
+    private func clampedValue(_ value: Int, for control: Control) -> Int {
+        guard control.kind == .range else { return value }
+        let lo = control.min ?? 0
+        let hi = control.max ?? value
+        return Swift.min(Swift.max(value, lo), hi)
+    }
+
+    private func performWrite(_ control: Control, value: Int, completion: (() -> Void)? = nil) {
+        guard let code = control.featureCode else {
+            DispatchQueue.main.async { completion?() }
+            return
+        }
         let payload: UInt16
         if control.valueMask != nil {
             let raw = rawCache[code]
@@ -156,7 +210,10 @@ final class DisplayController {
                     reg = (reg & ~siblingMask) | (v & siblingMask)
                 }
                 _ = AppleSiliconDDC.write(service: svc, command: code, value: UInt16(reg & 0xFFFF))
-                DispatchQueue.main.async { self.rawCache[code] = reg }
+                DispatchQueue.main.async {
+                    self.rawCache[code] = reg
+                    completion?()
+                }
             }
             return
         } else if control.byte != nil {
@@ -181,7 +238,10 @@ final class DisplayController {
                     }
                 }
                 _ = AppleSiliconDDC.write(service: svc, command: code, value: UInt16(reg & 0xFFFF))
-                DispatchQueue.main.async { self.rawCache[code] = reg }
+                DispatchQueue.main.async {
+                    self.rawCache[code] = reg
+                    completion?()
+                }
             }
             return
         } else if let channel = control.channelByte {
@@ -192,6 +252,7 @@ final class DisplayController {
         let svc = service
         queue.async {
             _ = AppleSiliconDDC.write(service: svc, command: code, value: payload)
+            DispatchQueue.main.async { completion?() }
         }
     }
 

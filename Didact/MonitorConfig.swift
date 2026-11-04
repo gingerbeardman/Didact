@@ -60,6 +60,10 @@ struct MonitorConfig: Codable, Identifiable {
         var product: Int
     }
 
+    func control(forRole role: Control.Role) -> Control? {
+        controls.first { $0.role == role }
+    }
+
     /// Matches on EDID (vendor+product) when available, otherwise on a product-name
     /// substring. EDID is preferred because it's exact.
     func matches(productName: String, vendor: Int?, product: Int?) -> Bool {
@@ -78,6 +82,13 @@ struct Control: Codable {
         case range     // slider, min...max
         case cycle     // pick one of N options
         case toggle    // on/off
+    }
+
+    // Inferred from the VCP code, not the label.
+    enum Role: Equatable {
+        case brightness
+        case volume
+        case mute
     }
 
     enum ByteSelector: String, Codable { case high, low }
@@ -143,6 +154,24 @@ struct Control: Codable {
     var stepValue: Int { Swift.max(1, step ?? 1) }
     var isHeader: Bool { kind == .group || kind == .section }
     var isReadable: Bool { vcp != nil && noRead != true && !isHeader }
+
+    var role: Role? {
+        guard let code = featureCode else { return nil }
+        switch (kind, code) {
+        case (.range, 0x10): return .brightness
+        case (.range, 0x62): return .volume
+        case (.toggle, 0x8D): return .mute
+        default: return nil
+        }
+    }
+
+    // One sixteenth of the range, unless the profile step is coarser.
+    var keyStep: Int {
+        guard kind == .range else { return 1 }
+        let span = Swift.max(1, (max ?? 100) - (min ?? 0))
+        let sixteenth = Swift.max(1, Int((Double(span) / 16.0).rounded()))
+        return Swift.max(stepValue, sixteenth)
+    }
 
     /// Stable key identifying this control's value within a display (a feature
     /// code can back more than one control — distinguished by channel, packed

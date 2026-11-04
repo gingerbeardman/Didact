@@ -28,6 +28,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private let knownConfigs: [MonitorConfig]   // for auto-filling from known profiles
     private let edid: [MonitorConfig.EDIDMatch]?   // this display's EDID, stamped into the saved profile
     private let displayID: CGDirectDisplayID    // to detect HDR support for the Color Mode step
+    private let readyProfile: MonitorConfig?
+    private let mediaKeySettings: MediaKeySettings
+    private let showMediaKeysStep: Bool
+    private let onMediaKeySettingsChanged: (MediaKeySettings) -> Void
     private let onSaved: () -> Void   // reload configs so the monitor lights up
     private let onClose: () -> Void
 
@@ -86,6 +90,8 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private var detectedCurrent: [Int: Int] = [:]   // value seen at detection, to re-seed the test control
     private var prepared = false
     private var onIntro = false
+    private var onMediaKeys = false
+    private var mediaKeySetupView: MediaKeySetupView?
     private var awaitingChoice = false   // cycle detecting: primary acts as "pick from changes"
     private var saved = false
     private var capabilitiesString: String?   // raw DDC dump, submitted alongside the config
@@ -101,12 +107,19 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
 
     init(monitorName: String, session: LearnSession, knownConfigs: [MonitorConfig],
          edid: [MonitorConfig.EDIDMatch]?, displayID: CGDirectDisplayID,
+         readyProfile: MonitorConfig?,
+         mediaKeySettings: MediaKeySettings, showMediaKeysStep: Bool,
+         onMediaKeySettingsChanged: @escaping (MediaKeySettings) -> Void,
          onSaved: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.monitorName = monitorName
         self.session = session
         self.knownConfigs = knownConfigs
         self.edid = edid
         self.displayID = displayID
+        self.readyProfile = readyProfile
+        self.mediaKeySettings = mediaKeySettings
+        self.showMediaKeysStep = showMediaKeysStep
+        self.onMediaKeySettingsChanged = onMediaKeySettingsChanged
         self.onSaved = onSaved
         self.onClose = onClose
     }
@@ -137,20 +150,35 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             session.prepare { [weak self] capabilities in
                 guard let self else { return }
                 self.capabilitiesString = capabilities
+
+                let group = DispatchGroup()
+
                 // Auto-fill controls a known profile + the capabilities dump confirm.
+                group.enter()
                 self.session.confirmedControls(from: self.knownConfigs) { [weak self] controls in
                     self?.autoFilled = controls
+                    group.leave()
                 }
                 // Recognize the monitor outright if a known profile matches distinctively.
+                group.enter()
                 self.session.recognizedProfile(from: self.knownConfigs) { [weak self] profile in
                     self?.recognizedProfile = profile
+                    group.leave()
                 }
                 // Capabilities codes drive the "your monitor may not have this" gate.
+                group.enter()
                 self.session.capabilityCodes { [weak self] codes in
                     self?.capsCodes = codes
+                    group.leave()
                 }
-                self.prepared = true
-                self.introReady()
+                group.notify(queue: .main) { [weak self] in
+                    guard let self else { return }
+                    if let readyProfile = self.readyProfile {
+                        self.recognizedProfile = readyProfile
+                    }
+                    self.prepared = true
+                    self.introReady()
+                }
             }
         }
     }
@@ -161,35 +189,51 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     /// to explain what the wizard does. Start stays disabled until the read ends.
     private func showIntro() {
         onIntro = true
+        onMediaKeys = false
         summaryScroll?.isHidden = true
+        discoveryScroll?.isHidden = true
         includeExtrasCheckbox?.isHidden = true
         copyButton?.isHidden = true
         controlContainer?.isHidden = true
+        mediaKeySetupView?.isHidden = true
         instructionLabel?.isHidden = false
         statusLabel?.isHidden = false
 
         progressLabel?.stringValue = "Welcome to Didact"
-        titleLabel?.stringValue = "Teach your monitor’s controls"
-        instructionLabel?.stringValue = """
-        Didact will build a control profile for this monitor. It detects the standard controls — brightness, contrast, volume, input — automatically. For anything else, it asks you to change that setting on the monitor’s own on-screen menu so it can learn the code.
+        if showMediaKeysStep {
+            titleLabel?.stringValue = "Set up Didact"
+            instructionLabel?.stringValue = """
+            First, choose how Didact should handle your Mac’s brightness and volume keys. Then Didact will set up this monitor’s controls — automatically where it can, and by observation where it can’t.
+            """
+            primaryButton?.title = "Continue"
+        } else {
+            titleLabel?.stringValue = "Teach your monitor’s controls"
+            instructionLabel?.stringValue = """
+            Didact will build a control profile for this monitor. It detects the standard controls — brightness, contrast, volume, input — automatically. For anything else, it asks you to change that setting on the monitor’s own on-screen menu so it can learn the code.
 
-        You’ll test each control as you go, skip any your monitor doesn’t have, then save at the end — and optionally share it so others with this monitor benefit.
-        """
+            You’ll test each control as you go, skip any your monitor doesn’t have, then save at the end — and optionally share it so others with this monitor benefit.
+            """
+            primaryButton?.title = "Start"
+        }
 
         setBackAvailable(false)
         retryButton?.isHidden = true
         skipButton?.isHidden = true
         doneButton?.isHidden = true
         primaryButton?.isHidden = false
-        primaryButton?.title = "Start"
-        primaryButton?.isEnabled = false
         #if DEBUG
         manualButton?.isHidden = false
         manualButton?.isEnabled = false
         #endif
 
-        setStatus("Reading your monitor’s capabilities…")
-        spinner?.startAnimation(nil)
+        spinner?.stopAnimation(nil)
+        if prepared {
+            introReady()
+        } else {
+            primaryButton?.isEnabled = false
+            setStatus("Reading your monitor’s capabilities…")
+            spinner?.startAnimation(nil)
+        }
     }
 
     private func introReady() {
@@ -200,6 +244,58 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         #if DEBUG
         manualButton?.isEnabled = true
         #endif
+    }
+
+    private func showMediaKeys() {
+        resetStepTransients()
+        onIntro = false
+        onMediaKeys = true
+        onDiscovery = false
+        summaryScroll?.isHidden = true
+        discoveryScroll?.isHidden = true
+        includeExtrasCheckbox?.isHidden = true
+        copyButton?.isHidden = true
+        controlContainer?.isHidden = true
+        instructionLabel?.isHidden = false
+        statusLabel?.isHidden = true
+        spinner?.stopAnimation(nil)
+        stopCadence()
+
+        progressLabel?.stringValue = "Get started"
+        titleLabel?.stringValue = "Media Keys"
+        instructionLabel?.stringValue = "Choose which keys Didact should handle. You can change this later in Didact ▸ Media Keys."
+        mediaKeySetupView?.refreshPermissionStatus()
+        mediaKeySetupView?.isHidden = false
+
+        setBackAvailable(true)
+        retryButton?.isHidden = true
+        skipButton?.isHidden = true
+        doneButton?.isHidden = true
+        primaryButton?.isHidden = false
+        primaryButton?.title = "Continue"
+        primaryButton?.isEnabled = true
+        #if DEBUG
+        manualButton?.isHidden = true
+        #endif
+    }
+
+    private func proceedAfterIntro() {
+        if recognizedProfile != nil {
+            useRecognized = true
+            index = templates.count
+            showSummary()
+        } else {
+            autoAcceptThenStep()
+        }
+    }
+
+    private func proceedAfterMediaKeys() {
+        onMediaKeys = false
+        if let mediaKeySetupView {
+            onMediaKeySettingsChanged(mediaKeySetupView.settings)
+        }
+        mediaKeySetupView?.isHidden = true
+        proceedAfterIntro()
     }
 
     // MARK: - Window
@@ -317,6 +413,10 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         includeExtras.translatesAutoresizingMaskIntoConstraints = false
         self.includeExtrasCheckbox = includeExtras
 
+        let mediaKeys = MediaKeySetupView(settings: mediaKeySettings)
+        mediaKeys.isHidden = true
+        self.mediaKeySetupView = mediaKeys
+
         let leftButtons = NSStackView(views: [back])
         leftButtons.translatesAutoresizingMaskIntoConstraints = false
         var rightItems: [NSView] = [retry, skip, done, primary]
@@ -336,7 +436,8 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         rightButtons.translatesAutoresizingMaskIntoConstraints = false
         rightButtons.spacing = 8
 
-        [progress, title, instruction, status, spin, cadence, container, scroll, discovery, leftButtons, rightButtons, includeExtras]
+        [progress, title, instruction, status, spin, cadence, container, scroll, discovery,
+         mediaKeys, leftButtons, rightButtons, includeExtras]
             .forEach { content.addSubview($0) }
 
         NSLayoutConstraint.activate([
@@ -384,6 +485,11 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             discovery.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             discovery.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
             discovery.bottomAnchor.constraint(equalTo: rightButtons.topAnchor, constant: -14),
+
+            mediaKeys.topAnchor.constraint(equalTo: instruction.bottomAnchor, constant: 16),
+            mediaKeys.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            mediaKeys.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            mediaKeys.bottomAnchor.constraint(lessThanOrEqualTo: rightButtons.topAnchor, constant: -14),
 
             leftButtons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             leftButtons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
@@ -1092,16 +1198,22 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         includeExtrasCheckbox?.isHidden = true   // shown below only when there are extras to drop
         copyButton?.isHidden = false             // DEBUG only; created only in debug builds
         progressLabel?.stringValue = "Done"
+        let ready = useRecognized && readyProfile != nil
 
         if useRecognized, let profile = recognizedProfile {
-            titleLabel?.stringValue = saved ? "Saved" : "Recognized monitor"
-            var lines = ["Matched to the verified “\(profile.name)” profile. Its full control set will be used:", ""]
+            titleLabel?.stringValue = saved ? "Saved" : (ready ? "Monitor ready" : "Recognized monitor")
+            var lines = [
+                ready
+                    ? "Didact is already using the “\(profile.name)” profile for this monitor. Its controls are available in the Didact menu:"
+                    : "Matched to the verified “\(profile.name)” profile. Its full control set will be used:",
+                ""
+            ]
             for control in profile.controls where !control.isHeader {
                 let code = control.featureCode.map(Self.hex) ?? "?"
                 lines.append("✓ \(control.label ?? "Control") — \(code) (\(control.kind.rawValue))")
             }
             summaryTextView?.string = lines.joined(separator: "\n")
-            setBackAvailable(false)
+            setBackAvailable(ready && showMediaKeysStep && !saved)
             // Offer a manual path for variants / testing.
             retryButton?.isHidden = saved
             retryButton?.title = "Teach Manually"
@@ -1162,12 +1274,16 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         }
 
         skipButton?.isHidden = true
-        primaryButton?.isHidden = false
-        primaryButton?.title = saved ? "Submit to Community" : "Save"
-        primaryButton?.isEnabled = saved || useRecognized || !orderedLearned().isEmpty
+        if ready, !saved {
+            primaryButton?.isHidden = true
+        } else {
+            primaryButton?.isHidden = false
+            primaryButton?.title = saved ? "Submit to Community" : "Save"
+            primaryButton?.isEnabled = saved || useRecognized || !orderedLearned().isEmpty
+        }
         // A clear way off the final screen: "Done" before saving acts as Close.
         doneButton?.isHidden = false
-        doneButton?.title = saved ? "Done" : "Close"
+        doneButton?.title = (saved || ready) ? "Done" : "Close"
     }
 
     /// The config to save/submit: the recognized profile wholesale, or the
@@ -1388,6 +1504,15 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
         // Navigate only — keep whatever was already learned so it's restored. Skip
         // over auto-accepted controls (they have no step).
         let pending = pendingSteps
+        if onMediaKeys {
+            showIntro()
+            return
+        }
+        if index >= templates.count, useRecognized, readyProfile != nil,
+           showMediaKeysStep, !saved {
+            showMediaKeys()
+            return
+        }
         if onDiscovery {                          // discovery list → back to last step
             onDiscovery = false
             if let last = pending.last { index = last; showStep() }
@@ -1402,9 +1527,13 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
             }
             return
         }
-        if let pos = pending.firstIndex(of: index), pos > 0 {
-            index = pending[pos - 1]
-            showStep()
+        if let pos = pending.firstIndex(of: index) {
+            if pos > 0 {
+                index = pending[pos - 1]
+                showStep()
+            } else if showMediaKeysStep {
+                showMediaKeys()
+            }
         }
     }
 
@@ -1474,18 +1603,18 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func primaryTapped() {
-        if onIntro {                            // Start → recognized profile or teaching
+        if onIntro {
             onIntro = false
             #if DEBUG
             manualButton?.isHidden = true
             #endif
-            if recognizedProfile != nil {
-                useRecognized = true
-                index = templates.count         // we're on the final summary, not a step
-                showSummary()
+            if showMediaKeysStep {
+                showMediaKeys()
             } else {
-                autoAcceptThenStep()
+                proceedAfterIntro()
             }
+        } else if onMediaKeys {
+            proceedAfterMediaKeys()
         } else if awaitingChoice {              // cycle detecting → pick from changes
             chooseManually()
         } else if index < templates.count {     // confirm the detected control
@@ -1525,6 +1654,7 @@ final class TeachWizardWindowController: NSObject, NSWindowDelegate {
     private func resetStepTransients() {
         session.endLearning()
         stopCadence()
+        mediaKeySetupView?.isHidden = true
         awaitingChoice = false
         testWriteWork?.cancel()
         testWriteWork = nil
