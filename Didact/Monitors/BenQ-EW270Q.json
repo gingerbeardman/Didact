@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "BenQ EW270Q",
+  "match": ["EW270Q"],
+  "edid": [{ "vendor": 2513, "product": 33069 }],
+  "comment": "Built from this monitor's DDC/CI capabilities (mccs_ver 2.2) and verified by read/write. Universal controls only: Colour Mode (0xDC) advertises 11 model-specific values that need OSD observation to label, so it is left to the Teach wizard.",
+  "controls": [
+    { "kind": "group", "label": "Image" },
+    { "kind": "range", "label": "Brightness", "vcp": "10", "min": 0, "max": 100,
+      "hideWhen": { "system": "hdr" } },
+    { "kind": "range", "label": "Contrast", "vcp": "12", "min": 0, "max": 100,
+      "hideWhen": { "system": "hdr" } },
+    { "kind": "range", "label": "Sharpness", "vcp": "87", "min": 0, "max": 10 },
+    { "kind": "cycle", "label": "Color Temperature", "vcp": "14",
+      "options": [
+        { "value": "0x04", "label": "5000K" },
+        { "value": "0x05", "label": "6500K" },
+        { "value": "0x08", "label": "9300K" },
+        { "value": "0x0b", "label": "User" }
+      ] },
+
+    { "kind": "group", "label": "Audio" },
+    { "kind": "range", "label": "Volume", "vcp": "62", "min": 0, "max": 50 },
+    { "kind": "toggle", "label": "Mute", "vcp": "8d", "onValue": 1, "offValue": 2 },
+
+    { "kind": "group", "label": "Input" },
+    { "kind": "cycle", "label": "Source", "vcp": "60",
+      "options": [
+        { "value": "0x0f", "label": "DisplayPort" },
+        { "value": "0x11", "label": "HDMI" },
+        { "value": "0x13", "label": "USB-C" }
+      ] }
+  ]
+}

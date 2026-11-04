@@ -19,8 +19,9 @@ settings window, no bloated vendor control panel, just standard macOS menus.
   (pick-one), **toggle** (on/off), grouped under **group**/**section** headers.
 - Live values are read back from the monitor and refreshed in the background;
   the menu reflects the monitor's real state.
-- Ships with a profile for the **BenQ RD280UG**, including BenQ-specific features
-  like Moon Halo (multiplexed VCP registers on a shared code).
+- Ships with profiles for the **BenQ RD280UG**, including BenQ-specific features
+  like Moon Halo (multiplexed VCP registers on a shared code), and the
+  **BenQ EW270Q** (image, audio and input controls).
 
 ## Works toward any DDC/CI monitor — no code changes
 
