@@ -65,10 +65,12 @@ A small 16-segment OSD shows handled changes. Didact does not use Apple's privat
 OSD API, and it keeps a single serial DDC writer with a latest-value coalescer so
 holding a key doesn't flood the monitor.
 
-**Touch Bar:** the Touch Bar's own brightness and volume controls belong to
-macOS and cannot be redirected to a third-party DDC monitor. Didact does not add
-a private Touch Bar/Control Strip item; use the menu bar or a custom shortcut
-instead.
+**Touch Bar:** Didact detects Touch Bar MacBooks and shows a note in the media-key
+setup. Use the Touch Bar's volume –, mute and + buttons, not the sliders. macOS
+may show the audio controls as disabled when the external output has no system
+volume, but the buttons are still clickable and control the monitor. The
+brightness slider is not handled; use the menu bar for brightness. Didact does
+not add a private Touch Bar/Control Strip item.
 
 ## Adding support for another monitor
 

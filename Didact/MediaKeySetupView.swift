@@ -18,6 +18,10 @@ final class MediaKeySetupView: NSView {
         Didact reads only the brightness, volume and mute keys — never normal \
         typing — and you can turn it off at any time in Didact ▸ Media Keys.
         """)
+    private let touchBarNote = NSTextField(wrappingLabelWithString: """
+        Touch Bar: use the volume –, mute and + buttons, not the slider. They \
+        still work when macOS shows the audio controls as disabled.
+        """)
     private let permissionLabel = NSTextField(wrappingLabelWithString: "")
 
     private(set) var settings: MediaKeySettings
@@ -46,7 +50,14 @@ final class MediaKeySetupView: NSView {
         permissionLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(permissionLabel)
 
-        NSLayoutConstraint.activate([
+        if TouchBar.isPresent {
+            touchBarNote.font = .systemFont(ofSize: 12)
+            touchBarNote.textColor = .systemOrange
+            touchBarNote.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(touchBarNote)
+        }
+
+        var constraints = [
             masterButton.topAnchor.constraint(equalTo: topAnchor),
             masterButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             masterButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
@@ -59,7 +70,6 @@ final class MediaKeySetupView: NSView {
             audioButton.leadingAnchor.constraint(equalTo: brightnessButton.leadingAnchor),
             audioButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
 
-            explanationLabel.topAnchor.constraint(equalTo: audioButton.bottomAnchor, constant: 12),
             explanationLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             explanationLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
 
@@ -67,7 +77,20 @@ final class MediaKeySetupView: NSView {
             permissionLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             permissionLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
             permissionLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        ]
+
+        if TouchBar.isPresent {
+            constraints += [
+                touchBarNote.topAnchor.constraint(equalTo: audioButton.bottomAnchor, constant: 8),
+                touchBarNote.leadingAnchor.constraint(equalTo: leadingAnchor),
+                touchBarNote.trailingAnchor.constraint(equalTo: trailingAnchor),
+                explanationLabel.topAnchor.constraint(equalTo: touchBarNote.bottomAnchor, constant: 12),
+            ]
+        } else {
+            constraints.append(explanationLabel.topAnchor.constraint(equalTo: audioButton.bottomAnchor, constant: 12))
+        }
+
+        NSLayoutConstraint.activate(constraints)
 
         applySettings()
         refreshPermissionStatus()

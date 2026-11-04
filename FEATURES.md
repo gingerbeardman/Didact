@@ -64,8 +64,10 @@ settings window, no bloated vendor control panel, just standard macOS menus.
 - A small 16-segment on-screen display confirms handled changes.
 - Requires Accessibility permission, requested only after the wizard or menu
   explains what it is used for. No special entitlement, login helper or driver.
-- **Touch Bar:** not supported. The Touch Bar's brightness/volume controls are
-  system-reserved and cannot be redirected to DDC; see the README note.
+- **Touch Bar:** detected on Touch Bar MacBooks. Use the Touch Bar's volume –,
+  mute and + buttons, not the sliders. The audio controls may look disabled when
+  the external output has no system volume, but the buttons still work. The
+  brightness slider is not handled; use the menu bar.
 
 ## Menu editor
 

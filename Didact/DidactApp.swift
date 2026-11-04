@@ -951,6 +951,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         If macOS does not show its prompt, use Didact ▸ Media Keys ▸ Grant Accessibility \
         Permission… to open the right settings pane.
         """
+        if TouchBar.isPresent {
+            alert.informativeText += """
+
+            On this MacBook’s Touch Bar, use the volume –, mute and + buttons, not the \
+            slider. They still work when macOS shows the audio controls as disabled.
+            """
+        }
         alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Not Now")
         NSApp.activate(ignoringOtherApps: true)
