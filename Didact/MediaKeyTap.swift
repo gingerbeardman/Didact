@@ -106,6 +106,12 @@ final class MediaKeyTap {
             return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event)
         }
 
+        // A hold only belongs to Didact if its initial press was taken. Don't
+        // start mid-hold just because the target became available on a repeat.
+        if parsed.isRepeat, !swallowed.contains(code) {
+            return Unmanaged.passUnretained(event)
+        }
+
         let alreadySwallowed = swallowed.contains(code)
         let handled = handler(parsed)
         if handled || alreadySwallowed {

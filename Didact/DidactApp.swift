@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func screensChanged() {
+        mediaKeyOSD.hideImmediately()
         rescanDisplays()
     }
 
@@ -236,6 +237,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshActive(rebuildWhenDone: true)
         rebuildMenu()
         refreshMediaKeySnapshot()
+        if displays.isEmpty {
+            stopMediaKeyTap()
+        } else {
+            ensureMediaKeysStarted()
+        }
     }
 
     private func refreshActive(rebuildWhenDone: Bool, rebuildOpenMenuWhenDone: Bool = false) {
@@ -554,6 +560,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      action: nil, keyEquivalent: "")
             restart.isEnabled = false
             submenu.addItem(restart)
+            let input = NSMenuItem(title: "Check Input Monitoring Permission…",
+                                   action: #selector(openInputMonitoring), keyEquivalent: "")
+            input.target = self
+            submenu.addItem(input)
         }
 
         submenu.addItem(.separator())
@@ -767,18 +777,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                            name: NSWorkspace.willSleepNotification, object: nil)
         center.addObserver(self, selector: #selector(systemDidWake),
                            name: NSWorkspace.didWakeNotification, object: nil)
-        if mediaKeysEnabled, AXIsProcessTrusted() {
-            startMediaKeyTap()
-        }
+        ensureMediaKeysStarted()
     }
 
     private func ensureMediaKeysStarted() {
-        guard mediaKeysEnabled, mediaKeyTap == nil, AXIsProcessTrusted() else { return }
+        guard mediaKeysEnabled, !displays.isEmpty,
+              mediaKeyTap == nil, AXIsProcessTrusted() else { return }
         startMediaKeyTap()
     }
 
     private func startMediaKeyTap() {
-        guard mediaKeysEnabled, mediaKeyTap == nil, AXIsProcessTrusted() else { return }
+        guard mediaKeysEnabled, !displays.isEmpty,
+              mediaKeyTap == nil, AXIsProcessTrusted() else { return }
         let router = mediaKeyRouter ?? MediaKeyRouter()
         router.onAction = { [weak self] action in self?.performMediaKey(action) }
         mediaKeyRouter = router
@@ -839,6 +849,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSWorkspace.shared.open(url)
         }
         startAXPolling()
+    }
+
+    @objc private func openInputMonitoring() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func requestAccessibility() {
@@ -902,7 +918,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func performMediaKey(_ action: MediaKeyAction) {
-        guard let controller = displays.first(where: { $0.displayID == action.displayID }),
+        guard mediaKeysEnabled, !mediaKeysSuspended,
+              let controller = displays.first(where: { $0.displayID == action.displayID }),
               let control = controller.config.control(forRole: action.role),
               !controller.isHidden(control) else { return }
 
