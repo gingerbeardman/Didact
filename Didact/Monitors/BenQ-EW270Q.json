@@ -3,9 +3,20 @@
   "name": "BenQ EW270Q",
   "match": ["EW270Q"],
   "edid": [{ "vendor": 2513, "product": 33069 }],
-  "comment": "Built from this monitor's DDC/CI capabilities (mccs_ver 2.2) and verified by read/write. Universal controls only: Colour Mode (0xDC) advertises 11 model-specific values that need OSD observation to label, so it is left to the Teach wizard.",
+  "comment": "Built from this monitor's DDC/CI capabilities (mccs_ver 2.2) and verified by read/write. Color Mode (0xDC) labels were confirmed against the monitor's OSD; its advertised 0x1C, 0x1D and 0x23 values do not appear in the OSD and are omitted.",
   "controls": [
     { "kind": "group", "label": "Image" },
+    { "kind": "cycle", "label": "Color Mode", "vcp": "dc",
+      "options": [
+        { "value": "0x00", "label": "Standard" },
+        { "value": "0x43", "label": "Cinema HDRi" },
+        { "value": "0x42", "label": "Game HDRi" },
+        { "value": "0x41", "label": "HDR" },
+        { "value": "0x0c", "label": "Rec.709" },
+        { "value": "0x0a", "label": "sRGB" },
+        { "value": "0x28", "label": "Game" },
+        { "value": "0x12", "label": "User" }
+      ] },
     { "kind": "range", "label": "Brightness", "vcp": "10", "min": 0, "max": 100,
       "hideWhen": { "system": "hdr" } },
     { "kind": "range", "label": "Contrast", "vcp": "12", "min": 0, "max": 100,
