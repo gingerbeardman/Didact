@@ -46,7 +46,7 @@ final class MediaKeyRouter {
     private let lock = NSLock()
     private var displays: [MediaKeyDisplayState] = []
     private var audio = MediaKeyAudioState(name: nil, hasNativeVolume: false, matchedDisplayID: nil)
-    private var enabled = false
+    private var settings = MediaKeySettings()
     private var permissionGranted = false
     private var suspended = false
 
@@ -55,13 +55,13 @@ final class MediaKeyRouter {
 
     func update(displays: [MediaKeyDisplayState],
                 audio: MediaKeyAudioState,
-                enabled: Bool,
+                settings: MediaKeySettings,
                 permissionGranted: Bool,
                 suspended: Bool) {
         lock.lock()
         self.displays = displays
         self.audio = audio
-        self.enabled = enabled
+        self.settings = settings
         self.permissionGranted = permissionGranted
         self.suspended = suspended
         lock.unlock()
@@ -80,27 +80,28 @@ final class MediaKeyRouter {
         lock.lock()
         defer { lock.unlock() }
 
-        guard enabled, permissionGranted, !suspended, event.isDown else { return nil }
+        guard settings.isActive, permissionGranted, !suspended, event.isDown else { return nil }
         let modifiers = event.modifiers.intersection([.command, .option, .control, .shift])
         guard modifiers.isEmpty else { return nil }
 
         switch event.key {
         case .brightnessUp, .brightnessDown:
-            guard let point = pointer,
+            guard settings.brightnessEnabled,
+                  let point = pointer,
                   let display = Self.display(at: point, in: displays),
                   Self.valid(display.brightness, requireEnabled: true) else { return nil }
             return MediaKeyAction(displayID: display.displayID, role: .brightness,
                                   direction: event.key == .brightnessUp ? 1 : -1)
 
         case .volumeUp, .volumeDown:
-            guard !audio.hasNativeVolume,
+            guard settings.audioEnabled, !audio.hasNativeVolume,
                   let displayID = volumeTarget(pointer: pointer),
                   let display = displays.first(where: { $0.displayID == displayID }) else { return nil }
             return MediaKeyAction(displayID: display.displayID, role: .volume,
                                   direction: event.key == .volumeUp ? 1 : -1)
 
         case .mute:
-            guard !audio.hasNativeVolume,
+            guard settings.audioEnabled, !audio.hasNativeVolume,
                   let displayID = muteTarget(pointer: pointer),
                   let display = displays.first(where: { $0.displayID == displayID }) else { return nil }
             return MediaKeyAction(displayID: display.displayID, role: .mute, direction: 0)

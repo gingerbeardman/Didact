@@ -119,13 +119,16 @@ struct MediaKeyTests {
     }
 
     private func makeRouter(displays: [MediaKeyDisplayState],
-                        audio: MediaKeyAudioState = MediaKeyAudioState(name: nil, hasNativeVolume: false,
-                                                                       matchedDisplayID: nil),
-                        enabled: Bool = true,
-                        permission: Bool = true,
-                        suspended: Bool = false) -> MediaKeyRouter {
+                            audio: MediaKeyAudioState = MediaKeyAudioState(name: nil, hasNativeVolume: false,
+                                                                           matchedDisplayID: nil),
+                            settings: MediaKeySettings = MediaKeySettings(
+                                masterEnabled: true,
+                                brightnessEnabled: true,
+                                audioEnabled: true),
+                            permission: Bool = true,
+                            suspended: Bool = false) -> MediaKeyRouter {
         let router = MediaKeyRouter()
-        router.update(displays: displays, audio: audio, enabled: enabled,
+        router.update(displays: displays, audio: audio, settings: settings,
                       permissionGranted: permission, suspended: suspended)
         return router
     }
@@ -277,6 +280,87 @@ struct MediaKeyTests {
         ]
         #expect(MediaKeyRouter.display(at: CGPoint(x: 150, y: 50), in: states)?.displayID == 2)
         #expect(MediaKeyRouter.display(at: CGPoint(x: 250, y: 50), in: states) == nil)
+    }
+
+    // MARK: - Role settings
+
+    @Test func masterOffPassesEveryKey() {
+        let router = makeRouter(
+            displays: [display()],
+            settings: MediaKeySettings(masterEnabled: false))
+        #expect(router.route(event(.brightnessUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+        #expect(router.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+        #expect(router.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func brightnessOffStillRoutesAudio() {
+        let router = makeRouter(
+            displays: [display()],
+            settings: MediaKeySettings(masterEnabled: true, brightnessEnabled: false))
+        #expect(router.route(event(.brightnessUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+        #expect(router.route(event(.volumeDown), pointer: CGPoint(x: 50, y: 50)) != nil)
+        #expect(router.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) != nil)
+    }
+
+    @Test func audioOffStillRoutesBrightness() {
+        let router = makeRouter(
+            displays: [display()],
+            settings: MediaKeySettings(masterEnabled: true, audioEnabled: false))
+        #expect(router.route(event(.brightnessDown), pointer: CGPoint(x: 50, y: 50)) != nil)
+        #expect(router.route(event(.volumeUp), pointer: CGPoint(x: 50, y: 50)) == nil)
+        #expect(router.route(event(.mute), pointer: CGPoint(x: 50, y: 50)) == nil)
+    }
+
+    @Test func bothRolesOffMeansTheFeatureIsInactive() {
+        let settings = MediaKeySettings(masterEnabled: true,
+                                        brightnessEnabled: false,
+                                        audioEnabled: false)
+        #expect(!settings.isActive)
+        let normalized = settings.normalized
+        #expect(!normalized.masterEnabled)
+    }
+
+    @Test func settingsDefaultToMasterOffWithBothRolesOn() {
+        let name = "DidactTests.MediaKeySettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        let settings = MediaKeySettingsStore.load(from: defaults)
+        #expect(!settings.masterEnabled)
+        #expect(settings.brightnessEnabled)
+        #expect(settings.audioEnabled)
+        #expect(!settings.isActive)
+    }
+
+    @Test func settingsPersistExplicitRoleChoices() {
+        let name = "DidactTests.MediaKeySettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        MediaKeySettingsStore.save(
+            MediaKeySettings(masterEnabled: true,
+                             brightnessEnabled: false,
+                             audioEnabled: true),
+            to: defaults)
+        let loaded = MediaKeySettingsStore.load(from: defaults)
+        #expect(loaded.masterEnabled)
+        #expect(!loaded.brightnessEnabled)
+        #expect(loaded.audioEnabled)
+        #expect(loaded.isActive)
+    }
+
+    @Test func savingBothRolesOffAlsoClearsMaster() {
+        let name = "DidactTests.MediaKeySettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        let saved = MediaKeySettingsStore.save(
+            MediaKeySettings(masterEnabled: true,
+                             brightnessEnabled: false,
+                             audioEnabled: false),
+            to: defaults)
+        #expect(!saved.masterEnabled)
+        #expect(!MediaKeySettingsStore.load(from: defaults).masterEnabled)
     }
 
     // MARK: - Latest-value coalescer

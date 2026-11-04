@@ -37,21 +37,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
 
     // Media keys (brightness/volume/mute)
-    private let mediaKeysKey = "mediaKeysEnabled"
+    private enum DefaultsKey {
+        static let setupWizardSeen = "hasSeenSetupWizard"
+    }
     private var mediaKeyTap: MediaKeyTap?
     private var mediaKeyRouter: MediaKeyRouter?
     private let mediaKeyOSD = MediaKeyOSD()
     private let audioMonitor = DefaultAudioOutputMonitor()
+    private var mediaKeySettings = MediaKeySettingsStore.load()
     private var mediaKeysSuspended = false
     private var mediaKeyTapFailed = false
     private var axPollTimer: Timer?
     private var axPollDeadline = Date.distantPast
     private var lastMediaKeyAdjustment = Date.distantPast
-
-    private var mediaKeysEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: mediaKeysKey) }
-        set { UserDefaults.standard.set(newValue, forKey: mediaKeysKey) }
-    }
     /// Visibility snapshot (hidden control stateKeys) frozen while the menu is open,
     /// so a post-open value refresh can't change the row set and jump the height.
     private var frozenHidden: Set<String>?
@@ -76,16 +74,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self, selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
-        // Onboard at startup: open the teach wizard when there's no supported
-        // monitor to control (so an unknown display can be set up), and always in
-        // debug builds so the wizard is easy to iterate on. Guarded so it never
-        // pops the "no display" alert when nothing teachable is connected.
+        // Onboard at startup. The first launch shows the full setup wizard even
+        // when the monitor is already recognized, so the media-key offer is not
+        // limited to people whose monitor needed teaching. After that, open the
+        // teach wizard when there's no supported monitor to control (so an
+        // unknown display can be set up), and always in debug builds so the
+        // wizard is easy to iterate on. Guarded so it never pops the "no display"
+        // alert when nothing teachable is connected.
+        let firstRun = !UserDefaults.standard.bool(forKey: DefaultsKey.setupWizardSeen)
         #if DEBUG
         let autoTeach = true
         #else
         let autoTeach = (active == nil)
         #endif
-        if autoTeach, teachableServiceExists() { openTeach() }
+        if (firstRun || autoTeach), teachableServiceExists() {
+            openTeach(showMediaKeys: firstRun)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -98,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         mediaKeyOSD.hideImmediately()
         rescanDisplays()
+        maybeShowFirstRunWizard()
     }
 
     /// One-time carry-over from the app's former name (BtnQ): taught monitor
@@ -300,6 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isMenuOpen = false
         frozenHidden = nil   // re-evaluate visibility fresh on the next open
         refreshActive(rebuildWhenDone: false)
+        maybeShowFirstRunWizard()
     }
 
     private func rebuildMenu() {
@@ -505,7 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Add / share monitor support. Teach is always enabled (its purpose is to
         // support a monitor that matches no config yet); the others need a display.
-        add("Set Up This Monitor…", #selector(openTeach))
+        add("Set Up This Monitor…", #selector(openTeachFromMenu))
         add("Edit Menu…", #selector(openMenuEditor), enabled: activeHasUserProfile())
         add("Submit to Community…", #selector(openSubmit), enabled: activeHasUserProfile())
         // Raw VCP change log — a developer diagnostic, not needed by end users now
@@ -544,27 +550,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         submenu.addItem(.separator())
 
-        let mediaKeys = NSMenuItem(title: "Use Media Keys for Brightness & Volume",
-                                   action: #selector(toggleMediaKeys), keyEquivalent: "")
-        mediaKeys.target = self
-        mediaKeys.state = mediaKeysEnabled ? .on : .off
-        submenu.addItem(mediaKeys)
+        let mediaKeys = NSMenuItem(title: "Media Keys", action: nil, keyEquivalent: "")
+        let mediaMenu = NSMenu()
 
-        if mediaKeysEnabled, !AXIsProcessTrusted() {
-            let grant = NSMenuItem(title: "Grant Accessibility Permission…",
-                                   action: #selector(grantAccessibility), keyEquivalent: "")
-            grant.target = self
-            submenu.addItem(grant)
-        } else if mediaKeysEnabled, mediaKeyTapFailed {
-            let retry = NSMenuItem(title: "Retry Media Keys",
-                                   action: #selector(retryMediaKeys), keyEquivalent: "")
-            retry.target = self
-            submenu.addItem(retry)
-            let input = NSMenuItem(title: "Check Input Monitoring Permission…",
-                                   action: #selector(openInputMonitoring), keyEquivalent: "")
-            input.target = self
-            submenu.addItem(input)
+        let master = NSMenuItem(title: "Use Media Keys",
+                                action: #selector(toggleMediaKeys), keyEquivalent: "")
+        master.target = self
+        master.state = mediaKeySettings.masterEnabled ? .on : .off
+        master.isEnabled = mediaKeySettings.masterEnabled
+            || (!displays.isEmpty
+                && (mediaKeySettings.brightnessEnabled || mediaKeySettings.audioEnabled))
+        mediaMenu.addItem(master)
+
+        let brightness = NSMenuItem(title: "Brightness Keys",
+                                    action: #selector(toggleBrightnessKeys), keyEquivalent: "")
+        brightness.target = self
+        brightness.state = mediaKeySettings.brightnessEnabled ? .on : .off
+        mediaMenu.addItem(brightness)
+
+        let audio = NSMenuItem(title: "Volume & Mute Keys",
+                               action: #selector(toggleAudioKeys), keyEquivalent: "")
+        audio.target = self
+        audio.state = mediaKeySettings.audioEnabled ? .on : .off
+        mediaMenu.addItem(audio)
+
+        if displays.isEmpty {
+            mediaMenu.addItem(.separator())
+            let note = NSMenuItem(title: "No supported monitor", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            mediaMenu.addItem(note)
+        } else if mediaKeySettings.masterEnabled {
+            mediaMenu.addItem(.separator())
+            if !AXIsProcessTrusted() {
+                let grant = NSMenuItem(title: "Grant Accessibility Permission…",
+                                       action: #selector(grantAccessibility), keyEquivalent: "")
+                grant.target = self
+                mediaMenu.addItem(grant)
+            } else if mediaKeyTapFailed {
+                let retry = NSMenuItem(title: "Retry Media Keys",
+                                       action: #selector(retryMediaKeys), keyEquivalent: "")
+                retry.target = self
+                mediaMenu.addItem(retry)
+                let input = NSMenuItem(title: "Check Input Monitoring Permission…",
+                                       action: #selector(openInputMonitoring), keyEquivalent: "")
+                input.target = self
+                mediaMenu.addItem(input)
+            }
         }
+
+        mediaKeys.submenu = mediaMenu
+        mediaKeys.state = mediaKeySettings.masterEnabled ? .on : .off
+        submenu.addItem(mediaKeys)
 
         submenu.addItem(.separator())
 
@@ -648,12 +684,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         listenWindow?.show()
     }
 
-    @objc private func openTeach() {
+    @objc private func openTeachFromMenu() {
+        openTeach(showMediaKeys: false)
+    }
+
+    /// First-run setup opens the wizard once, even for a recognized monitor, so
+    /// the media-key offer is not hidden from people who don't need to teach one.
+    private func maybeShowFirstRunWizard() {
+        guard !UserDefaults.standard.bool(forKey: DefaultsKey.setupWizardSeen),
+              !displays.isEmpty, teachWindow == nil, !isMenuOpen,
+              teachableServiceExists() else { return }
+        openTeach(showMediaKeys: true)
+    }
+
+    private func markSetupWizardSeen() {
+        UserDefaults.standard.set(true, forKey: DefaultsKey.setupWizardSeen)
+    }
+
+    private func openTeach(showMediaKeys: Bool) {
         // Prefer the active matched display — its LearnSession shares the serial
         // DDC queue, so probe reads stay ordered with normal control I/O.
         if let active {
             presentTeach(session: active.makeLearnSession(), name: active.productName,
-                         displayID: active.displayID)
+                         displayID: active.displayID, showMediaKeys: showMediaKeys,
+                         readyProfile: showMediaKeys ? active.config : nil)
             return
         }
         // No matched config: resolve a raw service for an online external display.
@@ -687,7 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let service = chosen.service else { return }
         let queue = DispatchQueue(label: "com.gingerbeardman.Didact.teach.\(chosen.displayID)")
         presentTeach(session: LearnSession(service: service, queue: queue), name: displayName(chosen),
-                     displayID: chosen.displayID)
+                     displayID: chosen.displayID, showMediaKeys: showMediaKeys, readyProfile: nil)
     }
 
     /// Whether there's anything the teach wizard could run against — the active
@@ -745,18 +799,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return name.isEmpty ? "Display \(match.displayID)" : name
     }
 
-    private func presentTeach(session: LearnSession, name: String, displayID: CGDirectDisplayID) {
+    private func presentTeach(session: LearnSession, name: String,
+                              displayID: CGDirectDisplayID, showMediaKeys: Bool,
+                              readyProfile: MonitorConfig?) {
         let (vendor, product) = Self.edidIDs(for: displayID)
         let edid = (vendor != nil && product != nil) ? [MonitorConfig.EDIDMatch(vendor: vendor!, product: product!)] : nil
+        // The first-run path should recognize an already-working user profile so
+        // it can go straight to the summary instead of re-teaching it. A manual
+        // re-teach keeps using only curated bundled profiles, so a user's own
+        // earlier (possibly wrong) profile can't feed its mistakes back in.
+        let knownConfigs = showMediaKeys
+            ? MonitorConfigStore.load()
+            : MonitorConfigStore.loadBundled()
+        if showMediaKeys {
+            // Mark on presentation, not on close: quitting with the window open
+            // should not bring the first-run wizard back on the next launch.
+            markSetupWizardSeen()
+        }
         if teachWindow == nil {
             teachWindow = TeachWizardWindowController(
-                monitorName: name, session: session, knownConfigs: MonitorConfigStore.loadBundled(), edid: edid,
+                monitorName: name, session: session, knownConfigs: knownConfigs, edid: edid,
                 displayID: displayID,
+                readyProfile: readyProfile,
+                mediaKeySettings: mediaKeySettings,
+                showMediaKeysStep: showMediaKeys,
+                onMediaKeySettingsChanged: { [weak self] settings in
+                    guard let self else { return }
+                    self.applyMediaKeySettings(settings)
+                    if self.mediaKeySettings.masterEnabled, !AXIsProcessTrusted() {
+                        // The wizard already showed the explanation next to the
+                        // switch; this is the explicit enable that asks macOS.
+                        self.requestAccessibility()
+                        self.startAXPolling()
+                    }
+                },
                 onSaved: { [weak self] in
                     self?.reloadConfigs()
                     self?.openMenuEditor()   // final step: arrange/hide/group the menu
                 },
-                onClose: { [weak self] in self?.teachWindow = nil; self?.updateDockVisibility() })
+                onClose: { [weak self] in
+                    if showMediaKeys { self?.markSetupWizardSeen() }
+                    self?.teachWindow = nil
+                    self?.updateDockVisibility()
+                })
         }
         updateDockVisibility()
         teachWindow?.show()
@@ -781,13 +866,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func ensureMediaKeysStarted() {
-        guard mediaKeysEnabled, !displays.isEmpty,
+        guard mediaKeySettings.isActive, !displays.isEmpty,
               mediaKeyTap == nil, AXIsProcessTrusted() else { return }
         startMediaKeyTap()
     }
 
     private func startMediaKeyTap() {
-        guard mediaKeysEnabled, !displays.isEmpty,
+        guard mediaKeySettings.isActive, !displays.isEmpty,
               mediaKeyTap == nil, AXIsProcessTrusted() else { return }
         let router = mediaKeyRouter ?? MediaKeyRouter()
         router.onAction = { [weak self] action in self?.performMediaKey(action) }
@@ -824,20 +909,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu()
     }
 
-    @objc private func toggleMediaKeys() {
-        mediaKeysEnabled.toggle()
-        if mediaKeysEnabled {
-            // Don't ask for system access before there's a monitor to control.
-            guard !displays.isEmpty else {
-                refreshMediaKeySnapshot()
-                rebuildMenu()
-                return
-            }
-            requestAccessibility()
-            if AXIsProcessTrusted() {
-                startMediaKeyTap()
+    /// Save a settings change and make the tap match it. The router snapshot is
+    /// refreshed immediately so a key pressed right after the menu closes sees
+    /// the new role flags.
+    private func applyMediaKeySettings(_ settings: MediaKeySettings) {
+        mediaKeySettings = MediaKeySettingsStore.save(settings)
+        refreshMediaKeySnapshot()
+        if mediaKeySettings.isActive {
+            if AXIsProcessTrusted(), !displays.isEmpty {
+                ensureMediaKeysStarted()
             } else {
-                startAXPolling()
+                stopMediaKeyTap()
             }
         } else {
             axPollTimer?.invalidate()
@@ -845,11 +927,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stopMediaKeyTap()
             mediaKeyOSD.hideImmediately()
         }
-        refreshMediaKeySnapshot()
         rebuildMenu()
     }
 
+    @objc private func toggleMediaKeys() {
+        if mediaKeySettings.masterEnabled {
+            var settings = mediaKeySettings
+            settings.masterEnabled = false
+            applyMediaKeySettings(settings)
+            return
+        }
+
+        // Don't ask for system access before there's a monitor to control.
+        guard !displays.isEmpty else { return }
+        guard confirmAccessibilityExplanation() else { return }
+
+        var settings = mediaKeySettings
+        settings.masterEnabled = true
+        applyMediaKeySettings(settings)
+
+        if !AXIsProcessTrusted() {
+            requestAccessibility()
+            startAXPolling()
+        }
+    }
+
+    @objc private func toggleBrightnessKeys() {
+        var settings = mediaKeySettings
+        settings.brightnessEnabled.toggle()
+        applyMediaKeySettings(settings)
+    }
+
+    @objc private func toggleAudioKeys() {
+        var settings = mediaKeySettings
+        settings.audioEnabled.toggle()
+        applyMediaKeySettings(settings)
+    }
+
+    /// Explain what Accessibility is used for before macOS shows its own prompt.
+    /// Only needed when access is missing; if it is already granted, enabling the
+    /// feature is silent.
+    private func confirmAccessibilityExplanation() -> Bool {
+        guard !AXIsProcessTrusted() else { return true }
+
+        let alert = NSAlert()
+        alert.messageText = "Accessibility Access"
+        alert.informativeText = """
+        Didact needs Accessibility access to read the brightness, volume and mute keys. \
+        It reads only those five media keys — never normal typing — and you can revoke \
+        access at any time in System Settings.
+
+        If macOS does not show its prompt, use Didact ▸ Media Keys ▸ Grant Accessibility \
+        Permission… to open the right settings pane.
+        """
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     @objc private func retryMediaKeys() {
+        guard mediaKeySettings.isActive else { return }
         stopMediaKeyTap()
         if AXIsProcessTrusted() {
             startMediaKeyTap()
@@ -919,7 +1057,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             audio: MediaKeyAudioState(name: audio.name,
                                       hasNativeVolume: audio.hasNativeVolume,
                                       matchedDisplayID: matched),
-            enabled: mediaKeysEnabled,
+            settings: mediaKeySettings,
             permissionGranted: AXIsProcessTrusted(),
             suspended: mediaKeysSuspended)
     }
@@ -936,10 +1074,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func performMediaKey(_ action: MediaKeyAction) {
-        guard mediaKeysEnabled, !mediaKeysSuspended,
+        guard mediaKeySettings.isActive, !mediaKeysSuspended,
               let controller = displays.first(where: { $0.displayID == action.displayID }),
               let control = controller.config.control(forRole: action.role),
               control.hidden != true, !controller.isHidden(control) else { return }
+
+        switch action.role {
+        case .brightness:
+            guard mediaKeySettings.brightnessEnabled else { return }
+        case .volume, .mute:
+            guard mediaKeySettings.audioEnabled else { return }
+        }
 
         lastMediaKeyAdjustment = Date()
 
