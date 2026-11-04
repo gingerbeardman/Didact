@@ -52,16 +52,18 @@ settings window, no bloated vendor control panel, just standard macOS menus.
 
 - Optional: the Mac's brightness, volume and mute keys control the external
   monitor instead of doing nothing.
+- Offered once in the first-run setup wizard. **Brightness Keys** and **Volume &
+  Mute Keys** both start enabled; the master switch is off until you enable it.
 - **Brightness** follows the display under the mouse pointer.
 - **Volume and mute** follow the default audio output's display, so the keys
   change the speakers you're actually hearing; if the name doesn't match a
   display, they fall back to the pointer display.
 - Keys pass through untouched when the pointer is over the built-in display, the
-  Mac audio device has its own volume control, no supported control exists, or a
-  modifier key is held.
+  Mac audio device has its own volume control, no supported control exists, a key
+  group is switched off, or a modifier key is held.
 - A small 16-segment on-screen display confirms handled changes.
-- Requires Accessibility permission, requested only when the feature is turned
-  on. No special entitlement, login helper or driver.
+- Requires Accessibility permission, requested only after the wizard or menu
+  explains what it is used for. No special entitlement, login helper or driver.
 - **Touch Bar:** not supported. The Touch Bar's brightness/volume controls are
   system-reserved and cannot be redirected to DDC; see the README note.
 

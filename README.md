@@ -27,7 +27,7 @@ controls you actually use.
 - macOS 13.0 or later.
 - Optional: Accessibility permission for media-key control. The app works
   without it; the keys control the monitor only after you enable the feature in
-  **Didact ▸ Use Media Keys for Brightness & Volume**.
+  the first-run setup wizard or **Didact ▸ Media Keys**.
 
 ## How it works
 
@@ -43,9 +43,14 @@ controls you actually use.
 
 ## Media keys
 
-The **Use Media Keys for Brightness & Volume** item in the Didact menu is
-optional and off by default. When enabled, Didact asks for Accessibility access
-and maps the Mac's brightness, volume and mute keys to DDC controls:
+The first-run setup wizard offers media-key control once for everyone. Both key
+groups start enabled — **Brightness** and **Volume & Mute** — but the master
+switch is off until you turn it on. The wizard explains what Accessibility is
+used for before macOS shows its prompt. You can change all of it later in
+**Didact ▸ Media Keys**.
+
+When enabled, Didact maps the Mac's brightness, volume and mute keys to DDC
+controls:
 
 - **Brightness** follows the display under the pointer.
 - **Volume and mute** follow the display matching the default audio output. If
@@ -53,7 +58,8 @@ and maps the Mac's brightness, volume and mute keys to DDC controls:
   left alone. If the audio device name doesn't match a display, the pointer
   display is used.
 - Everything else passes through: modifiers, unsupported or hidden controls, the
-  built-in display, and a monitor that hasn't been read yet.
+  built-in display, and a monitor that hasn't been read yet. Turning a key group
+  off leaves those keys to macOS.
 
 A small 16-segment OSD shows handled changes. Didact does not use Apple's private
 OSD API, and it keeps a single serial DDC writer with a latest-value coalescer so
